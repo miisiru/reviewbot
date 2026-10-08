@@ -59,6 +59,8 @@ def decoded_ratio(v, expect=None):
     return min(1.0, int(f[-1]) / max(1.0, dur))
 
 
+MAX_SECONDS = 20 * 60   # 이보다 긴 영상은 받지 않고 CHECK(사용자, 2026-10-09)
+
 BILI_HOSTS = ["upos-sz-mirrorcosov.bilivideo.com", "upos-sz-mirrorali.bilivideo.com", "upos-sz-mirrorcos.bilivideo.com"]
 
 
@@ -145,6 +147,24 @@ for rid in sys.argv[1:]:
                 continue
             seen.add(base)
             entries.append({"key": base, "url": base, "part": 1, "parts": 1, "run_part": True, "src": src})
+    # 20분 넘는 영상은 받지 않는다(사용자, 2026-10-09: 시간만 들고 틀리기 쉽다) → too_long.json, run_queue 가 CHECK 로 보낸다
+    tl_p = os.path.join(d, "too_long.json")
+    long_ = []
+    for e in entries:
+        if os.path.exists(os.path.join(d, f"video{entries.index(e)}.mp4")):
+            continue
+        p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", e["url"]],
+                           capture_output=True, text=True, encoding="utf8", errors="replace")
+        m = re.match(r"\s*([\d.]+)", p.stdout)
+        if m and float(m.group(1)) > MAX_SECONDS:
+            long_.append({"url": e["url"], "seconds": float(m.group(1))})
+    if long_:
+        json.dump(long_, open(tl_p, "w", encoding="utf8"), ensure_ascii=False, indent=1)
+        json.dump(entries, open(os.path.join(d, "videos.json"), "w", encoding="utf8"), ensure_ascii=False, indent=1)
+        print(rid, "TOO-LONG", ", ".join(f"{x['seconds'] / 60:.0f}min" for x in long_))
+        continue
+    if os.path.exists(tl_p):
+        os.remove(tl_p)
     for i, e in enumerate(entries):
         v = os.path.join(d, f"video{i}.mp4")
         e["file"] = f"video{i}.mp4"

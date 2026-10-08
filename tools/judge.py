@@ -557,8 +557,11 @@ def judge(rev):
     frames = []
     for vi in range(len(vids)):
         lays = layout_of(rev, vi) if os.path.exists(os.path.join(d, f'tabs{vi}', 'timeline.txt')) else []
-        for fp in sorted(glob.glob(os.path.join(d, f'tabs{vi}', '0*_*.jpg'))):
+        # 파일 이름은 「0359.10_LightCone」 꼴인데 1000초부터는 앞 0 이 없다(「1250.90_…」, rev_1dq2ylk) → 숫자로 시작하는 것 모두
+        for fp in sorted(glob.glob(os.path.join(d, f'tabs{vi}', '[0-9]*_*.jpg')), key=lambda p: float(os.path.basename(p).split('_')[0])):
             m = re.match(r'(\d+\.\d+)_(LightCone|Eidolon)', os.path.basename(fp))
+            if not m:
+                continue
             frames.append({'vid': vi, 't': float(m[1]), 'tab': m[2], 'path': fp, 'lay': lay_at(lays, float(m[1]))})
     # 언어(모델) 고르기: 광추 패널 제목이 제출 광추 이름과 가장 잘 맞는 모델
     # 언어(모델) 고르기: 광추 화면 두 장의 제목 · 머리글이 제출 이름들과 가장 잘 맞는 모델.

@@ -99,7 +99,7 @@ def run(rev, do_gp=True, reuse=False):
         # 실전(사용자, 2026-10-08): 「못 읽음」이 하나라도 있으면 신뢰도와 상관없이 CHECK.
         # 성혼 · 광추 중첩을 못 읽은 것은 도구 문제라 루프도 멈춘다
         if key in UNREAD:
-            out['check_reasons'].append(f'{why} (could not be read)')
+            out['check_reasons'].append(why if ('not read' in why or 'unreadable' in why) else f'{why} (could not be read)')
             if key in STOP_LOOP:
                 out['stop_loop'] = True
 
@@ -124,6 +124,14 @@ def run(rev, do_gp=True, reuse=False):
     ocr_mod.set_gpu(False)
     model = b['ocr_model']
     lc_found = sum(1 for c in b['chars'] if c.get('lc_seen') is not None)
+    # 메뉴 구간은 찾았는데(디테일 · 유물 · 성혼 등) 광추 탭이 한 번도 안 열렸으면 「못 읽음」이 아니라 「안 보여 줌」이다
+    # (rev_s4it7k: 넷 다 광추 탭을 안 염 → 거절이 맞다). 메뉴를 못 찾았거나 광추 화면이 있는데 누구 것인지 못 정한 때만 애매
+    segs = []
+    vids_p = os.path.join(ROOT, rev, 'videos.json')
+    for vi in range(len(json.load(open(vids_p, encoding='utf8'))) if os.path.exists(vids_p) else 1):
+        if os.path.exists(os.path.join(ROOT, rev, f'tabs{vi}', 'timeline.txt')):
+            segs += judge.segs_of(rev, vi)
+    lc_never_opened = bool(segs) and not any(k == 'LightCone' for _, _, k in segs)
     for c in b['chars']:
         name = c['char']
         sub = c['submitted']
@@ -143,7 +151,7 @@ def run(rev, do_gp=True, reuse=False):
                 ded('id_inferred', f'{name}: identified by {how}')
         if c.get('lc_seen') is None:
             prob(f'{name} Light Cone Superimposition not shown', 'lc_not_shown', char=name)
-            if lc_found < len(b['chars']) - 1:
+            if lc_found < len(b['chars']) - 1 and not lc_never_opened:
                 ded('not_shown_uncertain', f'{name}: Light Cone page not found (other pages also missing)')
         else:
             if c['lc_match'] < 0.7:
@@ -182,7 +190,7 @@ def run(rev, do_gp=True, reuse=False):
     uid = read_uid(rev, b['frames'])
     out['uid'] = uid
     if not uid:
-        ded('uid_missing', 'UID not read')
+        ded('uid_missing', 'UID not readable')
     tm('uid')
     # 3) 전투 HUD
     mode = s0.get('mode')

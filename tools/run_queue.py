@@ -177,7 +177,7 @@ def report(rev, a, item, action=None, reason=None):
     # 짧은 값만 나란히(긴 글을 칸에 넣으면 좁은 칸에서 줄이 마구 꺾인다)
     if a.get('gp') is not None:
         add('Global Passive', gp_lines(a['gp'], url), inline=True)
-    add('UID', f"`{a['uid']}`" if a.get('uid') else f'{ROW_MARK[UNSURE]} **not read**', inline=True)
+    add('UID', f"`{a['uid']}`" if a.get('uid') else f'{ROW_MARK[UNSURE]} **not readable**', inline=True)
     add('Battle (HUD)', bullets(a['checks'], url), inline=all(len(x) <= 40 for x in a['checks']))
     ded = a.get('deductions', [])
     add(f"Deductions (−{sum(n for n, _ in ded)})", [link_inline_timestamps(f'−{n} {w}', url) for n, w in ded])
@@ -225,11 +225,20 @@ def main():
         env = dict(ENV, HQ_QUEUE=one)
         print(sh([os.path.join(HERE, 'prep.py'), rev], env=env).stdout.strip())
         d = os.path.join(RUNS, rev)
-        vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
-        for i in range(len(vids)):
-            sh([os.path.join(HERE, 'tabs.py'), rev, str(i)])
-        r = sh([os.path.join(HERE, 'auto_judge.py'), rev])
-        open(os.path.join(d, 'auto_log.txt'), 'w', encoding='utf8').write(r.stdout + r.stderr[-3000:])
+        tl_p = os.path.join(d, 'too_long.json')
+        if os.path.exists(tl_p):
+            # 20분 넘는 영상: 받지 않고 곧바로 사람 확인(사용자, 2026-10-09)
+            mins = ', '.join(f"{x['seconds'] / 60:.0f} min" for x in json.load(open(tl_p, encoding='utf8')))
+            json.dump({'verdict': 'CHECK', 'confidence': 0, 'problems': [], 'problem_items': [], 'checks': [], 'build': [],
+                       'check_reasons': [f'video longer than 20 minutes ({mins}), not downloaded'], 'deductions': [],
+                       'uid': None, 'gp': None, 'timing': {}, 'stop_loop': False},
+                      open(os.path.join(d, 'auto.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
+        else:
+            vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
+            for i in range(len(vids)):
+                sh([os.path.join(HERE, 'tabs.py'), rev, str(i)])
+            r = sh([os.path.join(HERE, 'auto_judge.py'), rev])
+            open(os.path.join(d, 'auto_log.txt'), 'w', encoding='utf8').write(r.stdout + r.stderr[-3000:])
         if not os.path.exists(os.path.join(d, 'auto.json')):
             # 영상을 못 받는 등으로 판정이 안 됐다 — 이 건만 건너뛰고 다음 건으로(auto_log.txt 에 까닭)
             print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
