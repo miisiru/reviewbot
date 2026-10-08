@@ -3,6 +3,7 @@
 /*
 !/.gitignore
 !/README.md
+!/README.ko.md
 !/requirements.txt
 !/config.example.json
 !/reject_templates.md
