@@ -19,18 +19,72 @@ def sh(args, **kw):
     return subprocess.run([PY] + args, capture_output=True, text=True, encoding='utf8', errors='replace', env=kw.pop('env', ENV), **kw)
 
 
+def mmss(t):
+    return '?' if t is None else f'{int(t) // 60}:{int(t) % 60:02d}'
+
+
+GP_NAME = {'revive': 'Castorice', 'firewall': 'Silver Wolf LV.999'}
+
+
 def report(rev, a, item):
-    """디스코드 보고 글(영어, 링크는 < > 로 감싸 임베드를 끈다)."""
+    """디스코드 보고 글(영어, 링크는 < > 로 감싸 임베드를 끈다).
+    판정 · 신뢰도, 문제, 캐릭터마다 광추 · 중첩 · 성혼 대조(✓ 같음 / ✗ 다름 / ? 못 읽음), 보유 효과, 전투 결과, UID, 링크."""
+    from judge import en_key
     p = item['payload']
     side = (p.get('runs') or [p])[0]
     url = side.get('video_url') or ''
     sh_t = a.get('showcase')
     vid = url.split('&t=')[0].split('?t=')[0]
     sep = '&' if '?' in vid else '?'
-    lines = [f"**{a['verdict']}** {(item.get('run_ids') or [rev])[0]}  Confidence: {a['confidence']}%"
+    sub = ' '.join(str(x) for x in (side.get('boss_name'), side.get('subcategory'), side.get('metric_value')) if x not in (None, ''))
+    lines = [f"**{a['verdict']}** {(item.get('run_ids') or [rev])[0]} ({sub})  Confidence: {a['confidence']}%"
              + ('  ⚠ LOW CONFIDENCE' if a['confidence'] <= 80 else '')]
     lines += [f'- {x}' for x in a['problems']]
+    lines.append('Build (video vs submission):')
+    for b in a.get('build') or []:
+        s = b['submitted']
+        lc = en_key(s['lc']) if s.get('lc') else '?'
+        if b.get('lc_seen') is None:
+            lc_part = f'Light Cone {lc} S{s["s"]} ✗ not shown'
+        else:
+            name_ok = '✓' if (b.get('lc_match') or 0) >= 0.7 else '✗'
+            if b.get('s_seen') is None:
+                sup = f'S{s["s"]} ? unread'
+            else:
+                sup = f'S{b["s_seen"]} ' + ('✓' if b['s_seen'] == s['s'] else f'✗ (submitted S{s["s"]})')
+            if name_ok == '✓':
+                lc_part = f'Light Cone {lc} ✓ {sup} ({mmss(b.get("lc_t"))})'
+            else:
+                lc_part = f"Light Cone ✗ video '{b['lc_seen']}' (submitted {lc}) {sup} ({mmss(b.get('lc_t'))})"
+        if b.get('e_t') is None:
+            e_part = f'Eidolons E{s["e"]} ✗ not shown'
+        elif b.get('e_seen') is None:
+            e_part = f'Eidolons E{s["e"]} ? unread ({mmss(b.get("e_t"))})'
+        else:
+            gray = b.get('e_gray') or 0
+            if b['e_seen'] == s['e']:
+                mark = f'E{s["e"]} ✓'
+            elif b['e_seen'] - gray <= s['e'] <= b['e_seen']:
+                mark = f'E{s["e"]} ✓ ({gray} uncertain node)'
+            else:
+                mark = f'E{b["e_seen"]} ✗ (submitted E{s["e"]})'
+            e_part = f'Eidolons {mark} ({mmss(b.get("e_t"))})'
+        lines.append(f"- {b['char']}: {lc_part} · {e_part}")
+    g = a.get('gp')
+    if g is not None:
+        flags, seen, first = set(g.get('flags') or []), set(g.get('seen') or []), g.get('first') or {}
+        parts = []
+        for f in ('revive', 'firewall'):
+            if f in flags and f in seen:
+                parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} ✓')
+            elif f in flags:
+                parts.append(f'{GP_NAME[f]} submitted, not triggered ✗')
+            elif f in seen:
+                parts.append(f'{GP_NAME[f]} not submitted, triggered at {mmss(first.get(f))} ✗')
+        lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered ✓'))
     lines += [f'- {x}' for x in a['checks']]
+    if a.get('uid'):
+        lines.append(f"UID: {a['uid']}")
     if sh_t is not None:
         lines.append(f'Showcase: <{vid}{sep}t={int(sh_t)}>')
     lines.append(f'Video: <{url}>')

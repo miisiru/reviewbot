@@ -143,7 +143,7 @@ def run(rev, do_gp=True, reuse=False):
                 ded('eidolon_gray', f"{name}: {c['e_gray']} node(s) between locked/unlocked", c['e_gray'])
             if c.get('activatable'):
                 ded('eidolon_activatable', f'{name}: activatable Eidolon (red !) counted as not activated')
-    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'lc_t', 'e_t')} for c in b['chars']]
+    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'lc_t', 'e_t')} for c in b['chars']]
     tm('build')
     # 2) UID
     uid = read_uid(rev, b['frames'])
