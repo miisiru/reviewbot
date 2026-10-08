@@ -13,8 +13,9 @@ def get(rev, vid=0, height=1080):
     if os.path.exists(out) and os.path.getsize(out) > 0:
         return out
     fmt = f'bv*[vcodec^=avc1][height<={height}]/bv*[height<={height}]'
+    chunk = [] if 'bilibili.com' in vids[vid]['url'] else ['--http-chunk-size', '10M']   # 빌리빌리는 조각 요청을 거부(prep.py)
     subprocess.run([YT, '-q', '--no-progress', '--js-runtimes', 'node', '--retries', '50', '--fragment-retries', '50',
-                    '--http-chunk-size', '10M', '-N', '4', '--ffmpeg-location', FF, '--no-playlist',
+                    *chunk, '-N', '4', '--ffmpeg-location', FF, '--no-playlist',
                     '-f', fmt, '-o', out, vids[vid]['url']], capture_output=True)
     return out if os.path.exists(out) else None
 

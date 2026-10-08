@@ -65,7 +65,9 @@ def download(u, v):
     for k, fmt in enumerate(FORMATS):
         if os.path.exists(v):
             os.remove(v)
-        p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", "--http-chunk-size", "10M", "-N", "4", "--ffmpeg-location", FF,
+        # 빌리빌리 CDN 은 10M 조각 요청에 639바이트 오류 응답만 줘서 재시도로 수십 분을 버린다 → 조각 없이 받으면 수 초
+        chunk = [] if "bilibili.com" in u else ["--http-chunk-size", "10M"]
+        p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
                             "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s", "--no-simulate", u],
                            capture_output=True, text=True, encoding="utf8", errors="replace")
         log += p.stdout + p.stderr[-1000:]
