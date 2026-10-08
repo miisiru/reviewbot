@@ -64,9 +64,7 @@ review could be attached safely and cleanly. Most important first.
 7. **A rejection-reason template API.** Accept reasons as template id + values + language instead of free text
    (`{"template":"superimp_mismatch","char":...,"submitted":5,"video":1,"lang":"zh"}`), and let the site write the
    text in that language.
-8. **Showcase and battle start times at submission.** If submitters gave "character screens start at" and "battle
-   starts at", less of the video would need to be scanned.
-9. **Documented rate limits.** How many calls per second are allowed.
+8. **Documented rate limits.** How many calls per second are allowed.
 
 ---
 
