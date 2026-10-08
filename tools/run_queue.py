@@ -31,8 +31,8 @@ WARN_BELOW = 90   # 이 밑이면 ⚠️(사용자, 2026-10-08)
 
 def report(rev, a, item, action=None, reason=None):
     """디스코드 보고 글(영어, 링크는 < > 로 감싸 임베드를 끈다).
-    맨 앞 표시: :check: 사이트에서 승인함 / ❌ 거절함 / ⚠️ 신뢰도 90% 미만. 판정 · 신뢰도, 신뢰도가 깎인 이유(-# 작은 글),
-    문제, 거절 사유(넣은 글), 캐릭터마다 광추 · 중첩 · 성혼 대조(:check: 같음 / ✗ 다름 / ? 못 읽음), 보유 효과, 전투 결과, UID, 링크."""
+    맨 앞 표시: ✅ 사이트에서 승인함 / ❌ 거절함 / ⚠️ 신뢰도 90% 미만. 판정 · 신뢰도, 신뢰도가 깎인 이유(-# 작은 글),
+    문제, 거절 사유(넣은 글), 캐릭터마다 광추 · 중첩 · 성혼 대조(✅ 같음 / ❌ 다름 / ? 못 읽음), 보유 효과, 전투 결과, UID, 링크."""
     from judge import en_key
     p = item['payload']
     side = (p.get('runs') or [p])[0]
@@ -41,7 +41,7 @@ def report(rev, a, item, action=None, reason=None):
     vid = url.split('&t=')[0].split('?t=')[0]
     sep = '&' if '?' in vid else '?'
     sub = ' '.join(str(x) for x in (side.get('boss_name'), side.get('subcategory'), side.get('metric_value')) if x not in (None, ''))
-    marks = (':check: ' if action == 'approve' else '❌ ' if action == 'reject' else '') + ('⚠️ ' if a['confidence'] < WARN_BELOW else '')
+    marks = ('✅ ' if action == 'approve' else '❌ ' if action == 'reject' else '') + ('⚠️ ' if a['confidence'] < WARN_BELOW else '')
     did = {'approve': ' — approved on site', 'reject': ' — rejected on site'}.get(action, ' — not decided (human)')
     lines = [f"{marks}**{a['verdict']}** {(item.get('run_ids') or [rev])[0]} ({sub})  Confidence: {a['confidence']}%{did}"]
     lines += [f'-# −{n} {w}' for n, w in a.get('deductions', [])]
@@ -54,29 +54,30 @@ def report(rev, a, item, action=None, reason=None):
         s = b['submitted']
         lc = en_key(s['lc']) if s.get('lc') else '?'
         if b.get('lc_seen') is None:
-            lc_part = f'Light Cone {lc} S{s["s"]} ✗ not shown'
+            lc_part = f'Light Cone {lc} S{s["s"]} ❌ not shown'
         else:
-            name_ok = ':check:' if (b.get('lc_match') or 0) >= 0.7 else '✗'
+            name_ok = '✅' if (b.get('lc_match') or 0) >= 0.7 else '❌'
             if b.get('s_seen') is None:
                 sup = f'S{s["s"]} ? unread'
             else:
-                sup = f'S{b["s_seen"]} ' + (':check:' if b['s_seen'] == s['s'] else f'✗ (submitted S{s["s"]})')
-            if name_ok == ':check:':
-                lc_part = f'Light Cone {lc} :check: {sup} ({mmss(b.get("lc_t"))})'
+                sup = f'S{b["s_seen"]} ' + ('✅' if b['s_seen'] == s['s'] else f'❌ (submitted S{s["s"]})')
+            if name_ok == '✅':
+                lc_part = f'Light Cone {lc} ✅ {sup} ({mmss(b.get("lc_t"))})'
             else:
-                lc_part = f"Light Cone ✗ video '{b['lc_seen']}' (submitted {lc}) {sup} ({mmss(b.get('lc_t'))})"
+                lc_part = f"Light Cone ❌ video '{b['lc_seen']}' (submitted {lc}) {sup} ({mmss(b.get('lc_t'))})"
         if b.get('e_t') is None:
-            e_part = f'Eidolons E{s["e"]} ✗ not shown'
+            e_part = f'Eidolons E{s["e"]} ❌ not shown'
         elif b.get('e_seen') is None:
             e_part = f'Eidolons E{s["e"]} ? unread ({mmss(b.get("e_t"))})'
         else:
             gray = b.get('e_gray') or 0
             if b['e_seen'] == s['e']:
-                mark = f'E{s["e"]} :check:'
+                mark = f'E{s["e"]} ✅'
             elif b['e_seen'] - gray <= s['e'] <= b['e_seen']:
-                mark = f'E{s["e"]} :check: ({gray} uncertain node)'
+                from auto_judge import uncertain_eidolons
+                mark = f'E{s["e"]} ✅ ({uncertain_eidolons(b)} uncertain)'
             else:
-                mark = f'E{b["e_seen"]} ✗ (submitted E{s["e"]})'
+                mark = f'E{b["e_seen"]} ❌ (submitted E{s["e"]})'
             e_part = f'Eidolons {mark} ({mmss(b.get("e_t"))})'
         lines.append(f"- {b['char']}: {lc_part} · {e_part}")
     g = a.get('gp')
@@ -85,12 +86,12 @@ def report(rev, a, item, action=None, reason=None):
         parts = []
         for f in ('revive', 'firewall'):
             if f in flags and f in seen:
-                parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} :check:')
+                parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} ✅')
             elif f in flags:
-                parts.append(f'{GP_NAME[f]} submitted, trigger not found ' + ('? (human check)' if f == 'revive' else '✗'))
+                parts.append(f'{GP_NAME[f]} submitted, trigger not found ' + ('? (human check)' if f == 'revive' else '❌'))
             elif f in seen:
-                parts.append(f'{GP_NAME[f]} not submitted, triggered at {mmss(first.get(f))} ✗')
-        lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered :check:'))
+                parts.append(f'{GP_NAME[f]} not submitted, triggered at {mmss(first.get(f))} ❌')
+        lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered ✅'))
     lines += [f'- {x}' for x in a['checks']]
     if a.get('uid'):
         lines.append(f"UID: {a['uid']}")

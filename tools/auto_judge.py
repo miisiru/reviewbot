@@ -62,6 +62,13 @@ def start_seen(rev, vid, t0, model):
     return None
 
 
+def uncertain_eidolons(c):
+    """잠김 · 열림 점수가 애매한 성혼 노드를 「E3」 꼴로(노드 순서 = 성혼 단계)."""
+    sc = c.get('lock_scores') or []
+    lo, hi = judge.LOCK_GRAY
+    return ', '.join(f'E{i + 1}' for i, v in enumerate(sc) if lo <= v < judge.LOCK_MIN) or '?'
+
+
 def tstart(url):
     m = re.search(r'[?&#]t=(\d+)', url or '') or re.search(r'[?&]start=(\d+)', url or '')
     return int(m.group(1)) if m else 0
@@ -159,10 +166,11 @@ def run(rev, do_gp=True, reuse=False):
             if (c.get('e_frames') or 0) < 2 or ((c.get('e_frames') or 0) < 3 and blurry):
                 ded('eidolon_few_frames', f"{name}: Eidolons read from {c.get('e_frames')} frame(s)")
             if c.get('e_gray'):
-                ded('eidolon_gray', f"{name}: {c['e_gray']} node(s) between locked/unlocked", c['e_gray'])
+                ded('eidolon_gray', f"{name}: {uncertain_eidolons(c)} uncertain (locked or not)", c['e_gray'])
             if c.get('activatable'):
                 ded('eidolon_activatable', f'{name}: activatable Eidolon (red !) counted as not activated')
-    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'lc_t', 'e_t')} for c in b['chars']]
+    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'lock_scores', 'lc_t', 'e_t')}
+                    for c in b['chars']]
     tm('build')
     # 2) UID
     uid = read_uid(rev, b['frames'])
