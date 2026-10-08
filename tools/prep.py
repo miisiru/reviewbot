@@ -112,6 +112,15 @@ def download(u, v):
                                capture_output=True, text=True, encoding="utf8", errors="replace")
             log += p.stdout + p.stderr[-1000:]
             out = p.stdout
+            if chunk and "403" in p.stderr:
+                # 유튜브가 조각 요청 도중 403 을 주면 파일이 앞부분만 남는다(rev_1akuol5 17%) → 조각 없이 다시
+                if os.path.exists(v):
+                    os.remove(v)
+                p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", "-N", "4",
+                                    "--ffmpeg-location", FF, "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s",
+                                    "--no-simulate", u], capture_output=True, text=True, encoding="utf8", errors="replace")
+                log += "\n(retry without chunks after 403)\n" + p.stdout + p.stderr[-1000:]
+                out = p.stdout or out
         if os.path.exists(v):
             dm = re.match(r"\s*([\d.]+)\|", out)
             r = decoded_ratio(v, float(dm.group(1)) if dm else None)
