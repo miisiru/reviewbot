@@ -26,9 +26,13 @@ def mmss(t):
 GP_NAME = {'revive': 'Castorice', 'firewall': 'Silver Wolf LV.999'}
 
 
-def report(rev, a, item):
+WARN_BELOW = 90   # 이 밑이면 ⚠️(사용자, 2026-10-08)
+
+
+def report(rev, a, item, action=None, reason=None):
     """디스코드 보고 글(영어, 링크는 < > 로 감싸 임베드를 끈다).
-    판정 · 신뢰도, 문제, 캐릭터마다 광추 · 중첩 · 성혼 대조(✓ 같음 / ✗ 다름 / ? 못 읽음), 보유 효과, 전투 결과, UID, 링크."""
+    맨 앞 표시: :check: 사이트에서 승인함 / ❌ 거절함 / ⚠️ 신뢰도 90% 미만. 판정 · 신뢰도, 신뢰도가 깎인 이유(-# 작은 글),
+    문제, 거절 사유(넣은 글), 캐릭터마다 광추 · 중첩 · 성혼 대조(:check: 같음 / ✗ 다름 / ? 못 읽음), 보유 효과, 전투 결과, UID, 링크."""
     from judge import en_key
     p = item['payload']
     side = (p.get('runs') or [p])[0]
@@ -37,24 +41,28 @@ def report(rev, a, item):
     vid = url.split('&t=')[0].split('?t=')[0]
     sep = '&' if '?' in vid else '?'
     sub = ' '.join(str(x) for x in (side.get('boss_name'), side.get('subcategory'), side.get('metric_value')) if x not in (None, ''))
-    lines = [f"**{a['verdict']}** {(item.get('run_ids') or [rev])[0]} ({sub})  Confidence: {a['confidence']}%"
-             + ('  ⚠ LOW CONFIDENCE' if a['confidence'] <= 80 else '')]
+    marks = (':check: ' if action == 'approve' else '❌ ' if action == 'reject' else '') + ('⚠️ ' if a['confidence'] < WARN_BELOW else '')
+    did = {'approve': ' — approved on site', 'reject': ' — rejected on site'}.get(action, ' — not decided (human)')
+    lines = [f"{marks}**{a['verdict']}** {(item.get('run_ids') or [rev])[0]} ({sub})  Confidence: {a['confidence']}%{did}"]
+    lines += [f'-# −{n} {w}' for n, w in a.get('deductions', [])]
     lines += [f'- ⚠ CHECK: {x}' for x in a.get('check_reasons', [])]
     lines += [f'- {x}' for x in a['problems']]
-    lines.append('Build (video vs submission):')
+    if reason:
+        lines.append(f'Reason sent: {reason}')
+    lines.append('Build:')
     for b in a.get('build') or []:
         s = b['submitted']
         lc = en_key(s['lc']) if s.get('lc') else '?'
         if b.get('lc_seen') is None:
             lc_part = f'Light Cone {lc} S{s["s"]} ✗ not shown'
         else:
-            name_ok = '✓' if (b.get('lc_match') or 0) >= 0.7 else '✗'
+            name_ok = ':check:' if (b.get('lc_match') or 0) >= 0.7 else '✗'
             if b.get('s_seen') is None:
                 sup = f'S{s["s"]} ? unread'
             else:
-                sup = f'S{b["s_seen"]} ' + ('✓' if b['s_seen'] == s['s'] else f'✗ (submitted S{s["s"]})')
-            if name_ok == '✓':
-                lc_part = f'Light Cone {lc} ✓ {sup} ({mmss(b.get("lc_t"))})'
+                sup = f'S{b["s_seen"]} ' + (':check:' if b['s_seen'] == s['s'] else f'✗ (submitted S{s["s"]})')
+            if name_ok == ':check:':
+                lc_part = f'Light Cone {lc} :check: {sup} ({mmss(b.get("lc_t"))})'
             else:
                 lc_part = f"Light Cone ✗ video '{b['lc_seen']}' (submitted {lc}) {sup} ({mmss(b.get('lc_t'))})"
         if b.get('e_t') is None:
@@ -64,9 +72,9 @@ def report(rev, a, item):
         else:
             gray = b.get('e_gray') or 0
             if b['e_seen'] == s['e']:
-                mark = f'E{s["e"]} ✓'
+                mark = f'E{s["e"]} :check:'
             elif b['e_seen'] - gray <= s['e'] <= b['e_seen']:
-                mark = f'E{s["e"]} ✓ ({gray} uncertain node)'
+                mark = f'E{s["e"]} :check: ({gray} uncertain node)'
             else:
                 mark = f'E{b["e_seen"]} ✗ (submitted E{s["e"]})'
             e_part = f'Eidolons {mark} ({mmss(b.get("e_t"))})'
@@ -77,12 +85,12 @@ def report(rev, a, item):
         parts = []
         for f in ('revive', 'firewall'):
             if f in flags and f in seen:
-                parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} ✓')
+                parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} :check:')
             elif f in flags:
                 parts.append(f'{GP_NAME[f]} submitted, trigger not found ' + ('? (human check)' if f == 'revive' else '✗'))
             elif f in seen:
                 parts.append(f'{GP_NAME[f]} not submitted, triggered at {mmss(first.get(f))} ✗')
-        lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered ✓'))
+        lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered :check:'))
     lines += [f'- {x}' for x in a['checks']]
     if a.get('uid'):
         lines.append(f"UID: {a['uid']}")

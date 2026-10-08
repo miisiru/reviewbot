@@ -24,10 +24,13 @@ CONF = {
     'hud_weak': 5,                # HUD 값 읽기 일치율 50~80%
     'hud_poor': 15,               # HUD 값 읽기 일치율 50% 미만
     'uid_missing': 10,            # UID 를 못 읽음
-    'start_unseen': 10,           # 재생 시작 30초 안에 전투 HUD 를 못 봄
+    'start_unseen': 10,           # 재생 시작 1분 안에 전투 HUD 를 못 봄
     'not_shown_uncertain': 15,    # 「미표시」인데 다른 캐릭터 화면도 덜 잡힘(도구가 놓쳤을 수 있음)
 }
 CHECK_BELOW = 80
+START_WITHIN = 60   # 재생 시작 뒤 이 초 안에 전투가 보여야 한다(사용자, 2026-10-08: 30초 → 1분)
+UNREAD = {'decode_error', 'superimp_unread', 'eidolon_unread', 'hud_unread', 'uid_missing', 'start_unseen'}
+STOP_LOOP = {'superimp_unread', 'eidolon_unread'}
 
 
 def read_uid(rev, frames):
@@ -45,12 +48,12 @@ def read_uid(rev, frames):
 
 
 def start_seen(rev, vid, t0, model):
-    """t0 뒤 32초 안에 전투 HUD(소모 라운드 · 남은 행동값 라벨)가 보이는 첫 시각."""
+    """t0 뒤 62초 안에 전투 HUD(소모 라운드 · 남은 행동값 라벨)가 보이는 첫 시각."""
     d = os.path.join(ROOT, rev)
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
     video = os.path.join(d, vids[vid]['file'])
     dur, W, H = tabs.probe(video)
-    for t, f in tabs.frames(video, t0, min(32, dur - t0), 1, W, H):
+    for t, f in tabs.frames(video, t0, min(START_WITHIN + 2, dur - t0), 1, W, H):
         Hh, Ww = f.shape[:2]
         c = f[0:int(0.45 * Hh), int(0.60 * Ww):Ww]
         for b in ocr(c, model):
@@ -77,8 +80,20 @@ def run(rev, do_gp=True, reuse=False):
     out = {'rev': rev, 'run': (rj.get('run_ids') or [None])[0], 'problems': [], 'checks': [], 'deductions': [], 'notes': [],
            'check_reasons': []}   # 문제는 아니지만 사람이 꼭 봐야 하는 것(있으면 CHECK)
 
+    out['problem_items'] = []   # 거절 사유를 영상 언어로 쓰기 위한 구조(reasons.py)
+
+    def prob(text, kind, **kw):
+        out['problems'].append(text)
+        out['problem_items'].append(dict(kind=kind, **kw))
+
     def ded(key, why, n=1):
         out['deductions'].append((CONF[key] * n, why))
+        # 실전(사용자, 2026-10-08): 「못 읽음」이 하나라도 있으면 신뢰도와 상관없이 CHECK.
+        # 성혼 · 광추 중첩을 못 읽은 것은 도구 문제라 루프도 멈춘다
+        if key in UNREAD:
+            out['check_reasons'].append(f'{why} (could not be read)')
+            if key in STOP_LOOP:
+                out['stop_loop'] = True
 
     import time
     T = [time.time()]
@@ -115,27 +130,30 @@ def run(rev, do_gp=True, reuse=False):
             elif how:
                 ded('id_inferred', f'{name}: identified by {how}')
         if c.get('lc_seen') is None:
-            out['problems'].append(f'{name} Light Cone Superimposition not shown')
+            prob(f'{name} Light Cone Superimposition not shown', 'lc_not_shown', char=name)
             if lc_found < len(b['chars']) - 1:
                 ded('not_shown_uncertain', f'{name}: Light Cone page not found (other pages also missing)')
         else:
             if c['lc_match'] < 0.7:
                 # 제출 쪽 표기(「Dance Dance Dance」) 대신 게임 영어 이름(「Dance! Dance! Dance!」)으로 적는다
-                out['problems'].append(f"{name} Light Cone mismatch (submitted '{judge.en_key(sub['lc'])}', video '{c['lc_seen']}')")
+                prob(f"{name} Light Cone mismatch (submitted '{judge.en_key(sub['lc'])}', video '{c['lc_seen']}')", 'lc_mismatch', char=name,
+                     sub=judge.en_key(sub['lc']), sub_s=sub['s'], seen_text=c['lc_seen'], seen_s=c.get('s_seen'))
             elif c['lc_match'] < 0.9:
                 ded('lc_name_fuzzy', f"{name}: Light Cone name match {c['lc_match']}")
             if c.get('s_seen') is None:
                 ded('superimp_unread', f'{name}: Superimposition unreadable')
             elif c['s_seen'] != sub['s']:
-                out['problems'].append(f"{name} Superimposition mismatch (submitted S{sub['s']}, video S{c['s_seen']})")
+                prob(f"{name} Superimposition mismatch (submitted S{sub['s']}, video S{c['s_seen']})", 'superimp_mismatch', char=name,
+                     sub=sub['s'], video=c['s_seen'])
         if c.get('e_t') is None:
-            out['problems'].append(f'{name} Eidolons not shown')
+            prob(f'{name} Eidolons not shown', 'eidolon_not_shown', char=name)
         elif c.get('e_seen') is None:
             ded('eidolon_unread', f'{name}: Eidolons unreadable')
         else:
             lo = c['e_seen'] - (c.get('e_gray') or 0)
             if not (lo <= sub['e'] <= c['e_seen']):
-                out['problems'].append(f"{name} Eidolons mismatch (submitted E{sub['e']}, video E{c['e_seen']})")
+                prob(f"{name} Eidolons mismatch (submitted E{sub['e']}, video E{c['e_seen']})", 'eidolon_mismatch', char=name,
+                     sub=sub['e'], video=c['e_seen'])
             # 두 장이라도 노드 여섯이 모두 뚜렷하면(자물쇠 0.8 이상 · 열림 0.45 미만) 감점하지 않는다
             blurry = any(0.45 <= v < 0.8 for v in (c.get('lock_scores') or [0.6]))
             if (c.get('e_frames') or 0) < 2 or ((c.get('e_frames') or 0) < 3 and blurry):
@@ -180,9 +198,10 @@ def run(rev, do_gp=True, reuse=False):
             score = 2000 + rav
             out['checks'].append(f'Score (HUD): Remaining Action Value {rav} at Battle Over, boss killed -> 2000 + {rav} = {score}')
             if s0.get('metric_value') is not None and int(s0['metric_value']) != score:
-                out['problems'].append(f"Score mismatch (submitted {s0['metric_value']}, video {score})")
+                prob(f"Score mismatch (submitted {s0['metric_value']}, video {score})", 'score_mismatch', sub=s0['metric_value'], video=score)
             if (sub_cat == '0 AV') != (rav == 2000):
-                out['problems'].append(f"Category mismatch (submitted {sub_cat}, should be {'0 AV' if rav == 2000 else 'Clear'})")
+                prob(f"Category mismatch (submitted {sub_cat}, should be {'0 AV' if rav == 2000 else 'Clear'})", 'category_mismatch',
+                     sub=sub_cat, should='0 AV' if rav == 2000 else 'Clear')
     else:
         cyc = hv('cycles')
         if plight:
@@ -193,18 +212,19 @@ def run(rev, do_gp=True, reuse=False):
                 used = 500 - (pl[0] * 100 + pl[1])
                 out['checks'].append(f'Action Value (HUD): last cell {pl[0]} | {pl[1]} -> 500 - ({pl[0]}x100 + {pl[1]}) = {used}')
                 if s0.get('action_value') and int(s0['action_value']) != used:
-                    out['problems'].append(f"Action Value mismatch (submitted {s0['action_value']}, video {used})")
+                    prob(f"Action Value mismatch (submitted {s0['action_value']}, video {used})", 'av_mismatch', sub=s0['action_value'], video=used)
         if cyc is None:
             if not plight:
                 ded('hud_unread', 'Cycles Used at Battle Over not read')
         else:
             out['checks'].append(f'Cycles (HUD): {cyc} at Battle Over')
             if sub_cat == '0-Cycle' and cyc != 0:
-                out['problems'].append(f'Consumed Cycles mismatch (submitted 0 Cycles, video {cyc} Cycles)')
+                prob(f'Consumed Cycles mismatch (submitted 0 Cycles, video {cyc} Cycles)', 'cycles_mismatch', sub=0, video=cyc)
             elif sub_cat != '0-Cycle' and cyc == 0:
-                out['problems'].append(f'Category mismatch (submitted {sub_cat}, should be 0-Cycle)')
+                prob(f'Category mismatch (submitted {sub_cat}, should be 0-Cycle)', 'category_mismatch', sub=sub_cat, should='0-Cycle')
             elif sub_cat in ('full stars', 'Clear') and not plight and s0.get('metric_value') is not None and int(s0['metric_value']) != cyc:
-                out['problems'].append(f"Consumed Cycles mismatch (submitted {s0['metric_value']} Cycles, video {cyc} Cycles)")
+                prob(f"Consumed Cycles mismatch (submitted {s0['metric_value']} Cycles, video {cyc} Cycles)", 'cycles_mismatch',
+                     sub=s0['metric_value'], video=cyc)
     tm('hud')
     # 4) 보유 효과
     flags = {f for f in (s0.get('flags') or '').split(',') if f}
@@ -220,9 +240,9 @@ def run(rev, do_gp=True, reuse=False):
                 # 카스토리스: 제출에 있는데 배너를 못 찾으면, 실제로 안 썼든 도구가 놓쳤든 사람이 본다(사용자, 2026-10-08)
                 out['check_reasons'].append('Castorice Global Passive submitted, but its trigger banner was not found in the video')
             else:
-                out['problems'].append("Global Passive not triggered: Silver Wolf LV.999")
+                prob("Global Passive not triggered: Silver Wolf LV.999", 'gp_not_triggered', who='firewall')
         for f in sorted(seen - flags):
-            out['problems'].append(f"Global Passive missing: {'Castorice' if f == 'revive' else 'Silver Wolf LV.999'}")
+            prob(f"Global Passive missing: {'Castorice' if f == 'revive' else 'Silver Wolf LV.999'}", 'gp_missing', who=f)
     tm('gp')
     # 5) 시작 시각(한 런 · 한 영상)
     url = s0.get('video_url')
@@ -233,7 +253,7 @@ def run(rev, do_gp=True, reuse=False):
         st = cache['start']
         out['start'] = st
         if st is None:
-            ded('start_unseen', f'battle HUD not seen within 30s after {t0}s (may still be a lineup screen)')
+            ded('start_unseen', f'battle HUD not seen within {START_WITHIN}s after {t0}s (may still be a lineup screen)')
     tm('start')
     # 쇼케이스 시작
     first = min((fr['t'] for fr in b['frames'] if fr['vid'] == run_vid), default=None)

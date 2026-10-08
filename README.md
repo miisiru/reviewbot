@@ -174,7 +174,7 @@ have no separator, so they never match.
 
 ### 1-8. Other checks
 - **UID:** OCR of the bottom-left field on character screens. Unreadable lowers the confidence.
-- **Start time:** the battle HUD must appear within 32 s of the playback start (the link's `t=`), for single-run
+- **Start time:** the battle HUD must appear within 62 s (1 minute) of the playback start (the link's `t=`), for single-run
   submissions.
 - **Multi-part Bilibili videos:** for videos split into parts (P1 run + P2 settings, etc.), character screens are
   searched in every part.
@@ -188,7 +188,7 @@ Confidence = 100 − deductions (`CONF` in `tools/auto_judge.py`). The same vide
 | −30 | HUD value at the end of the battle not read |
 | −20 | Superimposition not read / Eidolons not read |
 | −15 | HUD read agreement below 50% / "not shown" while other characters' screens were also missed |
-| −10 | UID not read / battle not seen within 30 s of the playback start |
+| −10 | UID not read / battle not seen within 1 minute of the playback start |
 | −5 | Eidolons read from a single frame (or two blurry ones) / each uncertain node / an activatable node / HUD agreement 50–80% |
 | −4 | identified by inference (elimination, previous screen) |
 | −3 | Light Cone name match 0.7–0.9 |
