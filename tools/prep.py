@@ -59,7 +59,7 @@ def decoded_ratio(v, expect=None):
     return min(1.0, int(f[-1]) / max(1.0, dur))
 
 
-BILI_HOST = "upos-sz-mirrorcosov.bilivideo.com"
+BILI_HOSTS = ["upos-sz-mirrorcosov.bilivideo.com", "upos-sz-mirrorali.bilivideo.com", "upos-sz-mirrorcos.bilivideo.com"]
 
 
 def bili_fast(u, fmt, v):
@@ -71,11 +71,22 @@ def bili_fast(u, fmt, v):
     lines = [x for x in p.stdout.splitlines() if x.strip()]
     if len(lines) < 2 or not lines[1].startswith("http") or "\n" in lines[1].strip():
         return None
-    src = re.sub(r"^https://upos-[a-z0-9-]+\.bilivideo\.com", f"https://{BILI_HOST}", lines[1].strip())
+    orig = lines[1].strip()
     tmp = v + ".m4s"
-    r = subprocess.run(["curl", "-s", "-f", "-L", "--retry", "5", "-H", "Referer: https://www.bilibili.com/", "-A", "Mozilla/5.0",
-                        "-o", tmp, src])
-    if r.returncode != 0 or not os.path.exists(tmp):
+    # 미러를 차례로: 15초 동안 500KB/s 밑이면 끊고 다음 미러(cosov 도 가끔 멈춘다: rev_p81y5s 12분)
+    srcs = [re.sub(r"^https://upos-[a-z0-9-]+\.bilivideo\.com", f"https://{h}", orig) for h in BILI_HOSTS] + [orig]
+    ok = False
+    for src in dict.fromkeys(srcs):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        r = subprocess.run(["curl", "-s", "-f", "-L", "--speed-limit", "500000", "--speed-time", "15", "--connect-timeout", "10",
+                            "-H", "Referer: https://www.bilibili.com/", "-A", "Mozilla/5.0", "-o", tmp, src])
+        if r.returncode == 0 and os.path.exists(tmp):
+            ok = True
+            break
+    if not ok:
+        if os.path.exists(tmp):
+            os.remove(tmp)
         return None
     subprocess.run([FF, "-loglevel", "error", "-y", "-i", tmp, "-c", "copy", v])
     os.remove(tmp)
