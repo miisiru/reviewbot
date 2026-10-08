@@ -28,3 +28,5 @@
 
 __pycache__/
 *.pyc
+/tools/butterfly.py
+/tools/bf_tpl/

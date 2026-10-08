@@ -41,3 +41,71 @@ def localize(name, lang):
     _cache[key] = out
     json.dump(_cache, open(CACHE, 'w', encoding='utf8'), ensure_ascii=False)
     return out
+
+
+# ---------- 게임 글인지 ----------
+# 영상 화면의 큰 글자가 게임이 띄운 글(스킬 이름 · 배너)인지, 업로더가 넣은 자막 · 편집 글인지 가른다.
+# 짧은 TextMap 글(30자 이하)을 3글자 조각으로 색인해 두고, OCR 글과 조각이 많이 겹치는 것만 비교한다.
+_idx = {}
+IDX_DIR = os.path.join(HERE, '..', 'data', 'cache')
+
+
+def _n(s):
+    import unicodedata
+    s = unicodedata.normalize('NFKD', str(s))
+    s = unicodedata.normalize('NFC', ''.join(c for c in s if not unicodedata.combining(c)))
+    return re.sub(r'[\W_]+', '', s.lower())
+
+
+def _tris(s):
+    return {s[i:i + 3] for i in range(len(s) - 2)}
+
+
+def text_index(lang):
+    if lang in _idx:
+        return _idx[lang]
+    import pickle
+    p = os.path.join(IDX_DIR, f'textidx_{lang}.pkl')
+    if os.path.exists(p):
+        _idx[lang] = pickle.load(open(p, 'rb'))
+        return _idx[lang]
+    strs = sorted({n for n in (_n(clean(v)) for v in _load(lang).values() if isinstance(v, str) and len(v) <= 60)
+                   if 2 <= len(n) <= 30})
+    tri = {}
+    for i, s in enumerate(strs):
+        for t in _tris(s):
+            tri.setdefault(t, []).append(i)
+    _idx[lang] = (strs, set(strs), tri)
+    os.makedirs(IDX_DIR, exist_ok=True)
+    pickle.dump(_idx[lang], open(p, 'wb'))
+    return _idx[lang]
+
+
+def is_game_text(text, langs, ratio=0.75):
+    """OCR 글이 그 언어들의 게임 글(또는 그 일부)과 맞으면 True. 3글자보다 짧으면 가를 수 없어 True."""
+    import difflib
+    n = _n(text)
+    if len(n) < 3:
+        return True
+    q = _tris(n)
+    for lang in langs:
+        strs, full, tri = text_index(lang)
+        if n in full:
+            return True
+        cnt = {}
+        for t in q:
+            for i in tri.get(t, ()):
+                cnt[i] = cnt.get(i, 0) + 1
+        need = max(1, int(0.5 * len(q)))
+        for i, c in sorted(cnt.items(), key=lambda z: -z[1])[:40]:
+            if c < need:
+                break
+            s = strs[i]
+            if (len(n) >= 4 and n in s) or difflib.SequenceMatcher(None, n, s).ratio() >= ratio:
+                return True
+    return False
+
+
+# OCR 모델 → 그 모델로 읽는 게임 언어들
+MODEL_LANGS = {'chinese': ['CHS', 'CHT', 'JP', 'EN'], 'korean': ['KR', 'EN'], 'latin': ['EN', 'FR', 'DE', 'ES', 'PT', 'VI', 'ID'],
+               'eslav': ['RU', 'EN'], 'thai': ['TH', 'EN']}

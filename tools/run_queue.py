@@ -39,6 +39,7 @@ def report(rev, a, item):
     sub = ' '.join(str(x) for x in (side.get('boss_name'), side.get('subcategory'), side.get('metric_value')) if x not in (None, ''))
     lines = [f"**{a['verdict']}** {(item.get('run_ids') or [rev])[0]} ({sub})  Confidence: {a['confidence']}%"
              + ('  ⚠ LOW CONFIDENCE' if a['confidence'] <= 80 else '')]
+    lines += [f'- ⚠ CHECK: {x}' for x in a.get('check_reasons', [])]
     lines += [f'- {x}' for x in a['problems']]
     lines.append('Build (video vs submission):')
     for b in a.get('build') or []:
@@ -78,7 +79,7 @@ def report(rev, a, item):
             if f in flags and f in seen:
                 parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} ✓')
             elif f in flags:
-                parts.append(f'{GP_NAME[f]} submitted, not triggered ✗')
+                parts.append(f'{GP_NAME[f]} submitted, trigger not found ' + ('? (human check)' if f == 'revive' else '✗'))
             elif f in seen:
                 parts.append(f'{GP_NAME[f]} not submitted, triggered at {mmss(first.get(f))} ✗')
         lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered ✓'))

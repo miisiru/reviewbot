@@ -169,6 +169,8 @@ have no separator, so they never match.
   - It is a problem if a flag is in the submission but nothing triggered, or something triggered that is not in the
     flags.
   - The effect can trigger even when the character is not in the team (account-wide effect).
+  - Castorice (revive) is the exception. If it is in the submission but no banner is found, the item goes to **CHECK**,
+    whether it really was not used or the tool missed it (CHECK even with other problems; they are still listed).
 
 ### 1-8. Other checks
 - **UID:** OCR of the bottom-left field on character screens. Unreadable lowers the confidence.

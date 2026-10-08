@@ -74,7 +74,8 @@ def run(rev, do_gp=True, reuse=False):
     sides = p.get('runs') or [p]
     s0 = sides[0]
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
-    out = {'rev': rev, 'run': (rj.get('run_ids') or [None])[0], 'problems': [], 'checks': [], 'deductions': [], 'notes': []}
+    out = {'rev': rev, 'run': (rj.get('run_ids') or [None])[0], 'problems': [], 'checks': [], 'deductions': [], 'notes': [],
+           'check_reasons': []}   # 문제는 아니지만 사람이 꼭 봐야 하는 것(있으면 CHECK)
 
     def ded(key, why, n=1):
         out['deductions'].append((CONF[key] * n, why))
@@ -215,7 +216,11 @@ def run(rev, do_gp=True, reuse=False):
         seen = set(g['seen'])
         out['gp'] = {'flags': sorted(flags), 'seen': sorted(seen), 'first': {h['flag']: h['t'] for h in reversed(g['hits'])}}
         for f in sorted(flags - seen):
-            out['problems'].append(f"Global Passive not triggered: {'Castorice' if f == 'revive' else 'Silver Wolf LV.999'}")
+            if f == 'revive':
+                # 카스토리스: 제출에 있는데 배너를 못 찾으면, 실제로 안 썼든 도구가 놓쳤든 사람이 본다(사용자, 2026-10-08)
+                out['check_reasons'].append('Castorice Global Passive submitted, but its trigger banner was not found in the video')
+            else:
+                out['problems'].append("Global Passive not triggered: Silver Wolf LV.999")
         for f in sorted(seen - flags):
             out['problems'].append(f"Global Passive missing: {'Castorice' if f == 'revive' else 'Silver Wolf LV.999'}")
     tm('gp')
@@ -241,9 +246,9 @@ def run(rev, do_gp=True, reuse=False):
     # 판정
     conf = max(0, 100 - sum(x for x, _ in out['deductions']))
     out['confidence'] = conf
-    if any(k for k, _ in [(x, w) for x, w in out['deductions']] if False):
-        pass
-    if out['problems']:
+    if out['check_reasons']:
+        out['verdict'] = 'CHECK'          # 다른 문제가 있어도 사람에게(문제 목록은 그대로 남긴다)
+    elif out['problems']:
         out['verdict'] = 'REJECT'
     elif conf <= CHECK_BELOW or any(w.endswith('unreadable') or 'not read' in w for _, w in out['deductions']):
         out['verdict'] = 'CHECK'
@@ -257,6 +262,8 @@ def run(rev, do_gp=True, reuse=False):
 if __name__ == '__main__':
     r = run(sys.argv[1], do_gp='--nogp' not in sys.argv, reuse='--reuse' in sys.argv)
     print(r['rev'], r['run'], r['verdict'], f"{r['confidence']}%", 'UID', r['uid'], 'showcase', r['showcase'], 'start', r.get('start'))
+    for x in r.get('check_reasons', []):
+        print('  CHECK', x)
     for x in r['problems']:
         print('  PROBLEM', x)
     for x in r['checks']:
