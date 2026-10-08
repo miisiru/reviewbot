@@ -53,12 +53,14 @@ def start_seen(rev, vid, t0, model):
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
     video = os.path.join(d, vids[vid]['file'])
     dur, W, H = tabs.probe(video)
-    for t, f in tabs.frames(video, t0, min(START_WITHIN + 2, dur - t0), 1, W, H):
-        Hh, Ww = f.shape[:2]
-        c = f[0:int(0.45 * Hh), int(0.60 * Ww):Ww]
-        for b in ocr(c, model):
-            if hud.label_score(b[4], hud.CYCLES) >= 0.8 or hud.label_score(b[4], hud.RAV) >= 0.8:
-                return round(t, 1)
+    # 고른 모델로 못 찾으면 다른 언어로도: 게임 글과 UI 글의 언어가 다른 영상이 있다(rev_1g39naf: 이름 영어 · UI 태국어)
+    for m in [model] + [x for x in judge.MODELS if x != model]:
+        for t, f in tabs.frames(video, t0, min(START_WITHIN + 2, dur - t0), 1, W, H):
+            Hh, Ww = f.shape[:2]
+            c = f[0:int(0.6 * Hh), int(0.60 * Ww):Ww]
+            for b in ocr(c, m):
+                if hud.label_score(b[4], hud.CYCLES) >= 0.8 or hud.label_score(b[4], hud.RAV) >= 0.8:
+                    return round(t, 1)
     return None
 
 

@@ -402,7 +402,8 @@ def superimp_from(lines):
             if not nxt:
                 continue
             joined = t + nxt[0]
-        if re.search(r'[%+/]|lv|\d{2}', joined.lower()) or ':' in joined.rstrip(' :：'):
+        # 레벨 줄(「Lv.80/80」)은 빼되 태국어 · 영어 중첩 줄 「วางซ้อน Lv.1」 「Superimposition Lv.1」 은 남긴다(rev_1g39naf)
+        if re.search(r'[%+/]|\d{2}', joined.lower()) or ':' in joined.rstrip(' :：'):
             continue
         word = norm(re.sub(r'[0-9]', '', joined))
         if not word or len(word) > 24:
@@ -603,6 +604,16 @@ def judge(rev):
             tl = [t for _, _, t in pl_t[:4] if norm(t) not in PATH_WORDS] or ['']
             fr['lc_scores'] = sorted(((lc_score(tl, c), k) for k, c in enumerate(chars)), reverse=True)
             fr['superimp'], fr['superimp_line'] = superimp_from(pl)
+            if fr['superimp'] is None:
+                # 게임 글(광추 이름)과 UI 글(「วางซ้อน」)의 언어가 다른 영상이 있다(rev_1g39naf: 이름은 영어, UI 는 태국어)
+                # → 고른 모델로 못 찾으면 다른 모델로도 읽어 본다
+                for m2 in MODELS:
+                    if m2 == model:
+                        continue
+                    sp, line = superimp_from(read_lines(panel_crop(f), [m2])[m2])
+                    if sp is not None:
+                        fr['superimp'], fr['superimp_line'] = sp, f'{line} ({m2})'
+                        break
             if fr['superimp'] is None:
                 # 「중첩 N」 줄은 광추 효과 칸 안에 있고 그 칸은 저절로 내려간다 — 고른 프레임에서 줄이 위로 사라졌으면
                 # 같은 광추 구간의 다른 프레임(앞 1초 ~ 뒤 0.8초, 이웃 프레임은 넘지 않음)에서 읽는다(rev_3eq9x1)
