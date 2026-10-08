@@ -353,7 +353,9 @@ def ei_names(en):
             s = _ei_names.setdefault(norm(name), set())
             for vs in per.values():
                 s.update(norm(v.replace('\\n', '')) for v in vs if v)
-    return _ei_names.get(norm(en_key(en)), set()) or _ei_names.get(norm(en), set())
+    base = re.sub(r'\s*\([^()]*\)$', '', en)      # 「March 7th (Hunt)」 → 게임 이름 「March 7th」(두 갈래의 이름이 합쳐진다)
+    return (_ei_names.get(norm(en_key(en)), set()) or _ei_names.get(norm(en), set())
+            or _ei_names.get(norm(base), set()))
 
 
 def ei_who(f, lay, chars, model):

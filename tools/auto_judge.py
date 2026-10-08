@@ -119,7 +119,8 @@ def run(rev, do_gp=True, reuse=False):
                 ded('not_shown_uncertain', f'{name}: Light Cone page not found (other pages also missing)')
         else:
             if c['lc_match'] < 0.7:
-                out['problems'].append(f"{name} Light Cone mismatch (submitted '{sub['lc']}', video '{c['lc_seen']}')")
+                # 제출 쪽 표기(「Dance Dance Dance」) 대신 게임 영어 이름(「Dance! Dance! Dance!」)으로 적는다
+                out['problems'].append(f"{name} Light Cone mismatch (submitted '{judge.en_key(sub['lc'])}', video '{c['lc_seen']}')")
             elif c['lc_match'] < 0.9:
                 ded('lc_name_fuzzy', f"{name}: Light Cone name match {c['lc_match']}")
             if c.get('s_seen') is None:
