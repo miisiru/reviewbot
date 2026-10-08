@@ -8,9 +8,11 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
 결과: runs/<rev>/auto.json · auto_log.txt, 요약은 work/results.jsonl 에 한 줄씩"""
 import os, sys, json, subprocess, time
+from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from paths import RUNS, WORK, PY   # noqa: E402
+from webhook import post   # noqa: E402
 
 ENV = dict(os.environ, PYTHONIOENCODING='utf8')
 
@@ -28,82 +30,176 @@ GP_NAME = {'revive': 'Castorice', 'firewall': 'Silver Wolf LV.999'}
 
 WARN_BELOW = 90   # 이 밑이면 ⚠️(사용자, 2026-10-08)
 
+# 디스코드 봇(discordbot_supabase.py)의 제출 임베드와 같은 색: 대기 = 노랑, 승인 = 초록, 거절 = 빨강
+VERDICT_COLOR = {'APPROVE': 0x22c55e, 'REJECT': 0xef4444, 'CHECK': 0xfbbf24}
+OK, BAD, UNSURE = '✓', '✗', '?'
+ROW_MARK = {OK: '✅', BAD: '❌', UNSURE: '⚠️'}
+
+
+def worst(levels):
+    levels = set(levels)
+    return BAD if BAD in levels else UNSURE if UNSURE in levels else OK
+
+
+def clip(s, n=1024):
+    return s if len(s) <= n else s[:n - 1] + '…'
+
+
+def video_time(url, seconds):
+    """Return a Discord markdown link to a video timestamp, or a plain label."""
+    if seconds is None:
+        return mmss(seconds)
+    try:
+        seconds = max(0, int(float(seconds)))
+    except (TypeError, ValueError):
+        return '?'
+    label = mmss(seconds)
+    if not url:
+        return label
+    video = url.split('&t=')[0].split('?t=')[0]
+    sep = '&' if '?' in video else '?'
+    return f'[{label}]({video}{sep}t={seconds})'
+
+
+def link_inline_timestamps(text, url):
+    """Link raw `at 297.2` timestamps in deductions and other generated text."""
+    import re
+    if not url:
+        return text
+    return re.sub(
+        r'(?i)\bat\s+(\d+(?:\.\d+)?)',
+        lambda match: f'at {video_time(url, match.group(1))}',
+        text,
+    )
+
+
+def bullets(xs, url=''):
+    return '\n'.join(f'• {link_inline_timestamps(x, url)}' for x in xs)
+
+
+def side_name(side):
+    """봇의 _review_side_name 꼴: 「MOC | Boss | Subcategory | 10 Cycles | 5L / 2S」."""
+    mode = str(side.get('mode') or '').upper()
+    metric = side.get('metric_value')
+    if isinstance(metric, float) and metric.is_integer():
+        metric = int(metric)
+    parts = [mode, side.get('boss_name'), side.get('subcategory'),
+             None if metric in (None, '') else f"{metric} {'Score' if mode == 'AS' else 'Cycles'}"]
+    if side.get('total_limited_5star_count') is not None:
+        parts.append(f"{side.get('total_limited_5star_count', 0)}L / {side.get('total_standard_5star_count', 0)}S")
+    return ' | '.join(str(x) for x in parts if x) or 'Team'
+
+
+def build_row(b, video_url=''):
+    """캐릭터 한 명, 두 줄: 제출 빌드(봇의 fmt_team 꼴) / 영상 시각 링크 + 어긋난 것만 굵게.
+    색 표시는 줄 앞 하나만(가장 나쁜 것 ❌ > ⚠️ > ✅), 맞는 항목은 조용히 둔다."""
+    from judge import en_key
+    from auto_judge import uncertain_eidolons
+    s = b['submitted']
+    lc = en_key(s['lc']) if s.get('lc') else ''
+    head = f"**{b['char']}** (E{s['e']}S{s['s']}) — *{lc}*" if lc else f"**{b['char']}** (E{s['e']}) — *no Light Cone*"
+    issues = []
+    if b.get('lc_seen') is None:
+        issues.append((BAD, 'LC not shown'))
+    elif (b.get('lc_match') or 0) < 0.7:
+        issues.append((BAD, f"video LC '{b['lc_seen']}'"))
+    # 광추를 안 낀 제출: 영상도 「미장착」이면 맞고, 중첩은 보지 않는다
+    if lc and b.get('lc_seen') is not None:
+        if b.get('s_seen') is None:
+            issues.append((UNSURE, 'S unreadable'))
+        elif b['s_seen'] != s['s']:
+            issues.append((BAD, f'video S{b["s_seen"]}'))
+    if b.get('e_t') is None:
+        issues.append((BAD, 'Eidolons not shown'))
+    elif b.get('e_seen') is None:
+        issues.append((UNSURE, 'Eidolons unreadable'))
+    elif b['e_seen'] != s['e']:
+        if b['e_seen'] - (b.get('e_gray') or 0) <= s['e'] <= b['e_seen']:
+            issues.append((UNSURE, f'{uncertain_eidolons(b)} uncertain'))
+        else:
+            issues.append((BAD, f'video E{b["e_seen"]}'))
+    times = []
+    if b.get('lc_seen') is not None and b.get('lc_t') is not None:
+        times.append(f'LC {video_time(video_url, b["lc_t"])}')
+    if b.get('e_t') is not None:
+        times.append(f'E {video_time(video_url, b["e_t"])}')
+    tail = ' · '.join(times + [f'**{t}**' for _, t in issues])
+    return f'{ROW_MARK[worst(m for m, _ in issues)]} {head}\n└ {tail}'
+
+
+def gp_lines(g, video_url=''):
+    flags, seen, first = set(g.get('flags') or []), set(g.get('seen') or []), g.get('first') or {}
+    out = []
+    for f in ('revive', 'firewall'):
+        if f in flags and f in seen:
+            out.append(f'{ROW_MARK[OK]} {GP_NAME[f]} {video_time(video_url, first.get(f))}')
+        elif f in flags:
+            out.append(f'{ROW_MARK[UNSURE]} {GP_NAME[f]} **not found**' if f == 'revive'
+                       else f'{ROW_MARK[BAD]} {GP_NAME[f]} **not triggered**')
+        elif f in seen:
+            out.append(f'{ROW_MARK[BAD]} {GP_NAME[f]} **not submitted** {video_time(video_url, first.get(f))}')
+    return out or [f'{ROW_MARK[OK]} None']
+
 
 def report(rev, a, item, action=None, reason=None):
-    """디스코드 보고 글(영어, 링크는 < > 로 감싸 임베드를 끈다).
-    맨 앞 표시: ✅ 사이트에서 승인함 / ❌ 거절함 / ⚠️ 신뢰도 90% 미만(이모지는 여기만, 줄 안은 ✓ ✗). 판정 · 신뢰도, 신뢰도가 깎인 이유(-# 작은 글),
-    문제, 거절 사유(넣은 글), 캐릭터마다 광추 · 중첩 · 성혼 대조(✅ 같음 / ❌ 다름 / ? 못 읽음), 보유 효과, 전투 결과, UID, 링크."""
-    from judge import en_key
+    """디스코드 보고 임베드(영어). 디스코드 봇의 제출 임베드(_build_review_embed)와 같은 짜임:
+    제목 = 맨 앞 표시(✅ 사이트에서 승인함 / ❌ 거절함 / ⚠️ 신뢰도 90% 미만) + 판정 · 신뢰도, 제목 링크 = 검토 페이지, 색 = 판정.
+    설명 = 제출자 · 시즌 · 처리 상태 · 거절 사유(넣은 글). 칸 = 사람 확인 · 문제, 편성(캐릭터마다 광추 · 중첩 · 성혼 대조),
+    보유 효과, 전투 결과, UID, 신뢰도가 깎인 이유, 링크. 바닥글 = 런 ID · 검토 ID."""
     p = item['payload']
-    side = (p.get('runs') or [p])[0]
+    sides = p.get('runs') or [p]
+    side = sides[0]
     url = side.get('video_url') or ''
     sh_t = a.get('showcase')
     vid = url.split('&t=')[0].split('?t=')[0]
     sep = '&' if '?' in vid else '?'
-    sub = ' '.join(str(x) for x in (side.get('boss_name'), side.get('subcategory'), side.get('metric_value')) if x not in (None, ''))
+    review = f'https://theherta.com/mod?review={rev}'
     marks = ('✅ ' if action == 'approve' else '❌ ' if action == 'reject' else '') + ('⚠️ ' if a['confidence'] < WARN_BELOW else '')
-    did = {'approve': ' — approved on site', 'reject': ' — rejected on site'}.get(action, ' — not decided (human)')
-    lines = [f"{marks}**{a['verdict']}** {(item.get('run_ids') or [rev])[0]} ({sub})  Confidence: {a['confidence']}%{did}"]
-    lines += [f'-# −{n} {w}' for n, w in a.get('deductions', [])]
-    lines += [f'- ⚠ CHECK: {x}' for x in a.get('check_reasons', [])]
-    lines += [f'- {x}' for x in a['problems']]
+    status = {'approve': 'Approved on site', 'reject': 'Rejected on site'}.get(action, 'Not decided (human)')
+
+    desc = [f"**Author:** {side.get('author_name') or p.get('author_name') or '—'}",
+            f"**Season:** {side.get('season') or p.get('season') or '—'}",
+            f'**Status:** {status}']
     if reason:
-        lines.append(f'Reason sent: {reason}')
-    lines.append('Build:')
-    for b in a.get('build') or []:
-        s = b['submitted']
-        lc = en_key(s['lc']) if s.get('lc') else 'none'
-        if b.get('lc_seen') is None:
-            lc_part = f'Light Cone {lc} ' + ('' if lc == 'none' else f'S{s["s"]} ') + '✗ not shown'
-        elif lc == 'none':
-            # 광추를 안 낀 제출: 영상도 「미장착」이면 맞고, 중첩은 보지 않는다
-            lc_part = ('Light Cone none ✓ (video: not equipped)' if (b.get('lc_match') or 0) >= 0.7
-                       else f"Light Cone none ✗ (video: '{b['lc_seen']}')") + f' ({mmss(b.get("lc_t"))})'
-        else:
-            name_ok = '✓' if (b.get('lc_match') or 0) >= 0.7 else '✗'
-            if b.get('s_seen') is None:
-                sup = f'S{s["s"]} ? unread'
-            else:
-                sup = f'S{b["s_seen"]} ' + ('✓' if b['s_seen'] == s['s'] else f'✗ (submitted S{s["s"]})')
-            if name_ok == '✓':
-                lc_part = f'Light Cone {lc} ✓ {sup} ({mmss(b.get("lc_t"))})'
-            else:
-                lc_part = f"Light Cone ✗ video '{b['lc_seen']}' (submitted {lc}) {sup} ({mmss(b.get('lc_t'))})"
-        if b.get('e_t') is None:
-            e_part = f'Eidolons E{s["e"]} ✗ not shown'
-        elif b.get('e_seen') is None:
-            e_part = f'Eidolons E{s["e"]} ? unread ({mmss(b.get("e_t"))})'
-        else:
-            gray = b.get('e_gray') or 0
-            if b['e_seen'] == s['e']:
-                mark = f'E{s["e"]} ✓'
-            elif b['e_seen'] - gray <= s['e'] <= b['e_seen']:
-                from auto_judge import uncertain_eidolons
-                mark = f'E{s["e"]} ✓ ({uncertain_eidolons(b)} uncertain)'
-            else:
-                mark = f'E{b["e_seen"]} ✗ (submitted E{s["e"]})'
-            e_part = f'Eidolons {mark} ({mmss(b.get("e_t"))})'
-        lines.append(f"- {b['char']}: {lc_part} · {e_part}")
-    g = a.get('gp')
-    if g is not None:
-        flags, seen, first = set(g.get('flags') or []), set(g.get('seen') or []), g.get('first') or {}
-        parts = []
-        for f in ('revive', 'firewall'):
-            if f in flags and f in seen:
-                parts.append(f'{GP_NAME[f]} submitted, triggered at {mmss(first.get(f))} ✓')
-            elif f in flags:
-                parts.append(f'{GP_NAME[f]} submitted, trigger not found ' + ('? (human check)' if f == 'revive' else '✗'))
-            elif f in seen:
-                parts.append(f'{GP_NAME[f]} not submitted, triggered at {mmss(first.get(f))} ✗')
-        lines.append('Global Passive: ' + ('; '.join(parts) if parts else 'none submitted, none triggered ✓'))
-    lines += [f'- {x}' for x in a['checks']]
-    if a.get('uid'):
-        lines.append(f"UID: {a['uid']}")
+        desc.append(f'**Reason sent:** {reason}')
+
+    fields = []
+
+    def add(name, lines, inline=False):
+        if lines:
+            fields.append({'name': clip(name, 256), 'value': clip('\n'.join(lines) if isinstance(lines, list) else lines),
+                           'inline': inline})
+
+    add('⚠️ Needs human check', bullets(a.get('check_reasons') or [], url))
+    add('❌ Problems', bullets(a['problems'], url))
+    team = side_name(side) + (f' (+{len(sides) - 1} more)' if len(sides) > 1 else '')
+    add(team, [build_row(b, url) for b in a.get('build') or []] or ['—'])
+    # 짧은 값만 나란히(긴 글을 칸에 넣으면 좁은 칸에서 줄이 마구 꺾인다)
+    if a.get('gp') is not None:
+        add('Global Passive', gp_lines(a['gp'], url), inline=True)
+    add('UID', f"`{a['uid']}`" if a.get('uid') else f'{ROW_MARK[UNSURE]} **not read**', inline=True)
+    add('Battle (HUD)', bullets(a['checks'], url), inline=all(len(x) <= 40 for x in a['checks']))
+    ded = a.get('deductions', [])
+    add(f"Deductions (−{sum(n for n, _ in ded)})", [link_inline_timestamps(f'−{n} {w}', url) for n, w in ded])
+    links = [f'[Video]({url})'] if url else []
     if sh_t is not None:
-        lines.append(f'Showcase: <{vid}{sep}t={int(sh_t)}>')
-    lines.append(f'Video: <{url}>')
-    lines.append(f'Review: <https://theherta.com/mod?review={rev}>')
-    return '\n'.join(lines)
+        links.append(f'[Showcase {mmss(sh_t)}]({vid}{sep}t={int(sh_t)})')
+    links.append(f'[Review]({review})')
+    add('Links', ' · '.join(links))
+
+    run_id = (item.get('run_ids') or [rev])[0]
+    return {'title': clip(f"{marks}{a['verdict']} · {a['confidence']}% confidence", 256), 'url': review,
+            'description': clip('\n'.join(desc), 4096), 'color': VERDICT_COLOR.get(a['verdict'], 0x60a5fa),
+            'fields': fields, 'footer': {'text': f'ID: {run_id}  •  Review ID: {rev}'},
+            'timestamp': datetime.now(timezone.utc).isoformat()}
+
+
+def as_text(e):
+    """터미널에 찍을 임베드 글."""
+    out = [e['title'], e['description']]
+    for f in e['fields']:
+        out += [f"[{f['name']}]", f['value']]
+    return '\n'.join(out + [e['footer']['text']])
 
 
 def main():
@@ -135,14 +231,18 @@ def main():
         r = sh([os.path.join(HERE, 'auto_judge.py'), rev])
         open(os.path.join(d, 'auto_log.txt'), 'w', encoding='utf8').write(r.stdout + r.stderr[-3000:])
         res = json.load(open(os.path.join(d, 'auto.json'), encoding='utf8'))
-        msg = report(rev, res, item)
-        print(msg, f'\n({time.time() - t0:.0f}s)\n')
+        embed = report(rev, res, item)
+        print(as_text(embed), f'\n({time.time() - t0:.0f}s)\n')
         with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
             f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
                                 'problems': res['problems'], 'seconds': round(time.time() - t0)}, ensure_ascii=False) + '\n')
         wh = opt('--webhook')
         if wh:
-            sh([os.path.join(HERE, 'ask.py' if wh == 'question' else 'notify.py'), msg])
+            try:
+                post('question_webhook' if wh == 'question' else 'discord_webhook',
+                     {'embeds': [embed], 'allowed_mentions': {'parse': []}})
+            except Exception as e:
+                print('webhook failed:', e)
 
 
 if __name__ == '__main__':
