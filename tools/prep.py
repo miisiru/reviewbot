@@ -59,20 +59,48 @@ def decoded_ratio(v, expect=None):
     return min(1.0, int(f[-1]) / max(1.0, dur))
 
 
+BILI_HOST = "upos-sz-mirrorcosov.bilivideo.com"
+
+
+def bili_fast(u, fmt, v):
+    """빌리빌리: 영상 주소만 yt-dlp 로 얻고, CDN 미러를 빠른 곳(cosov)으로 바꿔 curl 로 받는다.
+    빌리빌리는 요청마다 미러를 다르게 주는데 어떤 미러(G-Core 오사카 등)는 80KB/s 라 한 건에 수십 분 걸렸다.
+    → yt-dlp --print 꼴의 「길이|제목」, 못 받으면 None(그때는 yt-dlp 로 받는다)"""
+    p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "-f", fmt, "--print", "%(duration)s|%(title)s", "--print", "urls", u],
+                       capture_output=True, text=True, encoding="utf8", errors="replace")
+    lines = [x for x in p.stdout.splitlines() if x.strip()]
+    if len(lines) < 2 or not lines[1].startswith("http") or "\n" in lines[1].strip():
+        return None
+    src = re.sub(r"^https://upos-[a-z0-9-]+\.bilivideo\.com", f"https://{BILI_HOST}", lines[1].strip())
+    tmp = v + ".m4s"
+    r = subprocess.run(["curl", "-s", "-f", "-L", "--retry", "5", "-H", "Referer: https://www.bilibili.com/", "-A", "Mozilla/5.0",
+                        "-o", tmp, src])
+    if r.returncode != 0 or not os.path.exists(tmp):
+        return None
+    subprocess.run([FF, "-loglevel", "error", "-y", "-i", tmp, "-c", "copy", v])
+    os.remove(tmp)
+    return lines[0] + "\n" if os.path.exists(v) else None
+
+
 def download(u, v):
     """720p 로 받고, 끝까지 디코드되지 않으면(90% 미만) 480p, 1080p 순으로 다시 받는다."""
     log = ""
     for k, fmt in enumerate(FORMATS):
         if os.path.exists(v):
             os.remove(v)
-        # 빌리빌리 CDN 은 10M 조각 요청에 639바이트 오류 응답만 줘서 재시도로 수십 분을 버린다 → 조각 없이 받으면 수 초
-        chunk = [] if "bilibili.com" in u else ["--http-chunk-size", "10M"]
-        p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
-                            "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s", "--no-simulate", u],
-                           capture_output=True, text=True, encoding="utf8", errors="replace")
-        log += p.stdout + p.stderr[-1000:]
+        out = bili_fast(u, fmt, v) if "bilibili.com" in u else None
+        if out:
+            log += out + "(fast mirror)\n"
+        else:
+            # 빌리빌리 CDN 은 10M 조각 요청에 639바이트 오류 응답만 줘서 재시도로 수십 분을 버린다 → 조각 없이 받으면 수 초
+            chunk = [] if "bilibili.com" in u else ["--http-chunk-size", "10M"]
+            p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
+                                "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s", "--no-simulate", u],
+                               capture_output=True, text=True, encoding="utf8", errors="replace")
+            log += p.stdout + p.stderr[-1000:]
+            out = p.stdout
         if os.path.exists(v):
-            dm = re.match(r"\s*([\d.]+)\|", p.stdout)
+            dm = re.match(r"\s*([\d.]+)\|", out)
             r = decoded_ratio(v, float(dm.group(1)) if dm else None)
             log += f"\nformat try {k + 1}: decoded {r:.0%}\n"
             if r >= 0.9:
