@@ -150,14 +150,20 @@ for rid in sys.argv[1:]:
     # 20분 넘는 영상은 받지 않는다(사용자, 2026-10-09: 시간만 들고 틀리기 쉽다) → too_long.json, run_queue 가 CHECK 로 보낸다
     tl_p = os.path.join(d, "too_long.json")
     long_ = []
-    for e in entries:
-        if os.path.exists(os.path.join(d, f"video{entries.index(e)}.mp4")):
-            continue
-        p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", e["url"]],
-                           capture_output=True, text=True, encoding="utf8", errors="replace")
-        m = re.match(r"\s*([\d.]+)", p.stdout)
-        if m and float(m.group(1)) > MAX_SECONDS:
-            long_.append({"url": e["url"], "seconds": float(m.group(1))})
+    for i, e in enumerate(entries):
+        v = os.path.join(d, f"video{i}.mp4")
+        if os.path.exists(v):
+            # 이미 받은 파일은 파일 길이로
+            o = subprocess.run([FF, "-i", v], capture_output=True, text=True, errors="replace").stderr
+            mm = re.search(r"Duration: (\d+):(\d+):([\d.]+)", o)
+            sec = int(mm.group(1)) * 3600 + int(mm.group(2)) * 60 + float(mm.group(3)) if mm else 0
+        else:
+            p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", e["url"]],
+                               capture_output=True, text=True, encoding="utf8", errors="replace")
+            m = re.match(r"\s*([\d.]+)", p.stdout)
+            sec = float(m.group(1)) if m else 0
+        if sec > MAX_SECONDS:
+            long_.append({"url": e["url"], "seconds": sec})
     if long_:
         json.dump(long_, open(tl_p, "w", encoding="utf8"), ensure_ascii=False, indent=1)
         json.dump(entries, open(os.path.join(d, "videos.json"), "w", encoding="utf8"), ensure_ascii=False, indent=1)
