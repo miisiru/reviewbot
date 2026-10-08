@@ -566,14 +566,19 @@ def judge(rev):
     # 첫 모델에서 멈추지 않고 다섯을 다 견준다
     model = 'chinese'
     lcs = [f for f in frames if f['tab'] == 'LightCone'][:2]
-    if lcs:
+    # 광추 탭을 아예 안 연 영상(rev_s4it7k: 태국어, 넷 다 성혼 · 유물만 봄)은 lcs 가 비어 제목으로 언어를 못 고른다
+    # → 성혼 탭 머리글로 대신 고른다(머리글은 어느 탭에나 있다). 그래도 없으면 중국어로 남고, 아래 HUD · 시작 찾기가
+    # 엉뚱한 언어로 돌아 못 읽는다(사용자, 2026-10-09)
+    cand = lcs or [f for f in frames if f['tab'] == 'Eidolon' and f['lay']][:3]
+    if cand:
         scores = {}
         for m in ('chinese', 'korean', 'latin', 'eslav', 'thai'):     # 러시아어 · 태국어 영상도 있다(eslav · thai 모델)
             tot = 0.0
-            for fr in lcs:
+            for fr in cand:
                 f = cv2.imread(fr['path'])
-                pl = read_lines(panel_crop(f), [m])[m]
-                tot += max((best(t, c['lc'])[0] for _, _, t in pl[:6] for c in chars if c['lc']), default=0)
+                if fr['tab'] == 'LightCone':
+                    pl = read_lines(panel_crop(f), [m])[m]
+                    tot += max((best(t, c['lc'])[0] for _, _, t in pl[:6] for c in chars if c['lc']), default=0)
                 if fr['lay']:
                     hl = read_lines(header_crop(f, fr['lay']), [m])[m]
                     tot += max((best(header_name(hl), c['char'])[0] for c in chars), default=0)
