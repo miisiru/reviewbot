@@ -1,0 +1,29 @@
+# 허용 목록 방식: 여기 적은 것만 올라간다.
+# config.json(웹후크 · 토큰), runs/(영상 · 제출 자료), work/, data/(게임 자료), auto/models/(OCR 모델)는 올리지 않는다.
+/*
+!/.gitignore
+!/README.md
+!/requirements.txt
+!/config.example.json
+!/reject_templates.md
+!/tools/
+!/auto/
+
+/tools/*
+!/tools/*.py
+!/tools/*.sh
+!/tools/*.mjs
+!/tools/eidolon_names.json
+!/tools/lock_tpl.png
+!/tools/menu_icons.png
+/tools/tabs_v*.py
+/tools/tabs_check.py
+/tools/t3.sh
+
+/auto/*
+!/auto/ocr.py
+!/auto/names.py
+!/auto/names_cache.json
+
+__pycache__/
+*.pyc

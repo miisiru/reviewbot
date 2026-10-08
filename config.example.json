@@ -1,0 +1,8 @@
+{
+ "discord_webhook": "https://discord.com/api/webhooks/... (검토 보고용)",
+ "question_webhook": "https://discord.com/api/webhooks/... (질문 · 시험 결과용)",
+ "mod_token": "Supabase access token (Bearer)",
+ "mod_refresh_token": "Supabase refresh token",
+ "supabase_url": "https://<project>.supabase.co",
+ "supabase_anon_key": "사이트가 쓰는 공개 anon 키"
+}

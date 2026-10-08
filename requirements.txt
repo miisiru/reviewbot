@@ -1,0 +1,7 @@
+numpy
+opencv-python
+rapidocr-onnxruntime==1.2.3
+# Windows 에서 그래픽카드(DirectML)를 쓰려면 onnxruntime 대신 onnxruntime-directml
+onnxruntime
+imageio-ffmpeg
+yt-dlp
