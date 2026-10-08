@@ -131,6 +131,10 @@ def run(rev, do_gp=True, reuse=False):
             how = c.get(key) or ''
             if how.startswith('name 1') or how.startswith('details name 1') or how.startswith('name 0.9'):
                 continue
+            # 광추 제목이 거의 그대로 읽히고 다른 캐릭터 광추와 0.25 넘게 갈리면(judge 가 고를 때 거는 조건) 확실하다
+            m = re.match(r'lc title (\d\.\d+)', how)
+            if m and float(m[1]) >= 0.95:
+                continue
             if re.match(r'eidolon names [3-6]/', how) or ' + ' in how:
                 continue          # 성혼 이름 셋 이상이 한 캐릭터와만 맞거나, 따로 된 근거 둘이 같은 캐릭터를 가리키면 확실하다
             if how.startswith('name') or how.startswith('lc title') or how.startswith('details') or how.startswith('eidolon names'):

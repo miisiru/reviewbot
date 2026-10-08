@@ -101,7 +101,8 @@ def badge_votes(c, lab):
 
 def read_topright(f, model):
     H, W = f.shape[:2]
-    c = f[0:int(0.45 * H), int(0.60 * W):W]
+    # 가로로 넓은 화면(1280×584, rev_fjaqx)은 배지가 0.38~0.47 높이까지 내려온다 → 0.6 까지 본다
+    c = f[0:int(0.6 * H), int(0.60 * W):W]
     res = ocr(c, model)
     lines = [(b[1], b[0], b[3], b[4]) for b in res]
     out = {}

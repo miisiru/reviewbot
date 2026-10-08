@@ -296,19 +296,40 @@ def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
     if ref_img is not None and ref_img.shape[:2] == ref.shape[:2]:
         ref = ref_img
     ref_nm = tabs.name_mask(ref, lay)
+    mx, n = _eidolon_pass(fr, lay, t_ref, ref_nm)
+    fit = eidolon_fit(mx) if mx else None
+    if mx is None or n < 3 or fit[2] < FIT_SURE:
+        # 애매하거나 프레임이 적으면 둘레를 더 본다(사용자, 2026-10-09): 앞뒤 2초, 머리글 조건 없이 —
+        # 머리글은 화면이 열리는 연출 동안 「다름」으로 읽혀 또렷한 프레임을 버리는 일이 있다(rev_ss0gr5 361.1~361.23초).
+        # 다른 캐릭터 화면은 노드 옆 성혼 이름 그림으로 나눠 뺀다
+        fr2 = list(tabs.frames(video, max(0, t_ref - 2.0), 4.0, 30, W, H))
+        mx2, n2 = _eidolon_pass(fr2, lay, t_ref, None)
+        fit2 = eidolon_fit(mx2) if mx2 else None
+        if mx2 is not None and (mx is None or fit2[2] > fit[2] or (fit2[2] >= fit[2] and n2 > n)):
+            mx, n = mx2, n2
+    if mx is None:
+        return None, None, 0
+    return sum(1 for v in mx if v is not None and v >= LOCK_MIN), mx, n
+
+
+def _eidolon_pass(fr, lay, t_ref, ref_nm):
+    """read_eidolon 의 한 번 읽기. ref_nm 이 있으면 머리글 이름이 같은 프레임만(이름이 같아진 뒤 0.1초 빼고).
+    → (노드별 최댓값, 쓴 프레임 수) 또는 (None, 0)"""
+    import tabs
     # 이름이 같아진 뒤 0.1초는 쓰지 않는다 — 성혼 탭을 연 채 캐릭터를 넘기면 머리글이 먼저 바뀌고 노드 그림은 0.1초쯤 늦게 바뀐다
     # (30fps 로는 서너 장. 한 장만 빼면 앞 캐릭터 노드가 섞인다: rev_16nnmps 317.7초)
     t_ref_used = t_ref
     sts, same_since = [], None
     for t, f in fr:
-        same = tabs.same_name(tabs.name_mask(f, lay), ref_nm) is not False
-        if not same:
-            same_since = None
-            continue
-        if same_since is None:
-            same_since = t
-        if t - same_since < 0.095:
-            continue
+        if ref_nm is not None:
+            same = tabs.same_name(tabs.name_mask(f, lay), ref_nm) is not False
+            if not same:
+                same_since = None
+                continue
+            if same_since is None:
+                same_since = t
+            if t - same_since < 0.095:
+                continue
         # 메뉴에서 켜진 탭이 성혼이 아니면 쓰지 않는다 — 행적 화면의 노드 둘레가 성혼 노드 배치에 들어맞아
         # 「자물쇠 없음」으로 섞이는 일이 있다(rev_1fntqfx 303.4초)
         hsv = cv2.cvtColor(f, cv2.COLOR_BGR2HSV)
@@ -320,7 +341,7 @@ def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
             continue
         sts.append((t, st, node_names(f, pred, lay[2])))
     if not sts:
-        return None, None, 0
+        return None, 0
     # 머리글이 워터마크에 덮이면 이름 비교로 캐릭터가 바뀐 것을 못 가른다(rev_122c7wk 233.0초 앞 캐릭터,
     # rev_1alwmmn 943.63초 다음 캐릭터) → 노드 옆 성혼 이름이 셋 넘게 한꺼번에 바뀐 자리로 나눠 기준 시각이 든 구간만 쓴다.
     # 자물쇠 점수가 튀는 것으로 가르면 안 된다: 영상에 박힌 자막 상자가 걷히면 가렸던 노드 점수가 0.4 → 0.9 로 튄다(rev_zrakw)
@@ -335,7 +356,7 @@ def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
     mx = seg[0][1]
     for _, st in seg[1:]:
         mx = [q if p is None else p if q is None else max(p, q) for p, q in zip(mx, st)]
-    return sum(1 for v in mx if v is not None and v >= LOCK_MIN), mx, len(seg)
+    return mx, len(seg)
 
 
 def red_badge(f, lay, row=4):
@@ -408,10 +429,69 @@ def no_lc_words():
     return _no_lc
 
 
+_guide = None
+
+
+def guide_words():
+    """광추 제목과 한 줄로 읽히는 오른쪽 위 「캐릭터 공략」 단추 글(13개 언어, TextMap)."""
+    global _guide
+    if _guide is None:
+        _guide = sorted({norm(v) for l in LANGS for v in (localize('Character Guide', l) or [])} - {''}, key=len, reverse=True)
+    return _guide
+
+
+def title_sim(t, a):
+    """OCR 줄 t 가 광추 이름 a 인 정도. 줄에 「캐릭터 공략」 단추 글 · 길 이름 · 레벨이 붙어 읽혀도(「Character Guide
+    Mushy Shroomy's Adventures」) 이름 부분만 본다: 단추 글을 떼고, 그래도 길면 줄 안에서 이름 길이만큼의 가장 잘 맞는 자리."""
+    n, an = norm(t), (a if isinstance(a, list) else norm(a))
+    if not n or not an:
+        return 0.0
+    for g in guide_words():
+        if g in n:
+            n = n.replace(g, '')
+    n = n.translate(_SMALL_KANA)
+    if re.search('[Ѐ-ӿ]', n):
+        n = n.translate(_LAT_CYR)       # 러시아어 줄에 섞여 읽힌 라틴 닮은꼴(zаnаvеs → занавес)
+    L = len(an)
+    if len(n) <= 1.15 * L:
+        wins = [n]
+    else:
+        # OCR 이 한두 글자를 빼거나 더 읽어도(燃ゆる影 → 燃ゆ影) 맞게 길이 L-2 ~ L+2 창
+        wins = [n[i:i + m] for m in range(max(1, L - 2), L + 3) for i in range(0, max(1, len(n) - m + 1))]
+    return max(_charset_ratio(w, an) if isinstance(an, list) else difflib.SequenceMatcher(None, w, an.translate(_SMALL_KANA)).ratio()
+               for w in wins)
+
+
+_LAT_CYR = str.maketrans('aeopcxykmthbnzvsiu', 'аеорсхукмтнвпзвсии')
+# 일본어 작은 글자는 OCR 이 큰 글자로 읽는 일이 잦다(めくって → めくつて)
+_SMALL_KANA = str.maketrans('ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ', 'あいうえおつやゆよわアイウエオツヤユヨワ')
+
+
+def _charset_ratio(w, sets):
+    """글자 자리마다 허용 글자 모음(간체 · 번체 같은 자리 글자)과 맞춘 비율."""
+    if len(w) != len(sets):
+        return difflib.SequenceMatcher(None, w, ''.join(min(s) for s in sets)).ratio()
+    return sum(1 for ch, s in zip(w, sets) if ch in s) / len(sets)
+
+
+def lc_aliases(en):
+    """aliases 에 간체 · 번체를 한 자리씩 합친 것을 더한다: 영상 글이 「當一颗星」처럼 두 글자 체계가 섞여 읽혀도 맞게."""
+    al = list(aliases(en))
+    k = en_key(en)
+    chs, cht = [norm(x) for x in localize(k, 'CHS') or []], [norm(x) for x in localize(k, 'CHT') or []]
+    for a in chs:
+        for b in cht:
+            if len(a) == len(b) and a != b:
+                al.append([{p, q} for p, q in zip(a, b)])
+    return al
+
+
 def lc_score(texts, c):
     """광추 제목 칸 글들이 이 캐릭터의 제출 광추와 얼마나 맞는지. 제출 광추가 빈 칸이면 「광추 없음」 낱말과 맞는 정도."""
     if c['lc']:
-        return max(best(t, c['lc'])[0] for t in texts)
+        # 긴 제목은 두 줄로 읽힌다(「Mushy Shroomy's」 / 「Adventures」) → 이웃 줄을 이은 것과 모두 이은 것도 본다
+        tt = list(texts) + [a + ' ' + b for a, b in zip(texts, texts[1:])] + ([' '.join(texts)] if len(texts) > 2 else [])
+        return max(title_sim(t, a) for t in tt for a in lc_aliases(c['lc']))
     ws = no_lc_words()
     return max((1.0 if norm(t) in ws or any(len(w) >= 3 and w in norm(t) for w in ws) else
                 max((sim(t, w) for w in ws), default=0.0)) for t in texts)
@@ -610,7 +690,8 @@ def judge(rev):
         elif dt and dt['who'] and dt['who'][0][0] >= 0.7 and (len(dt['who']) < 2 or dt['who'][1][0] < dt['who'][0][0] - 0.2):
             fr['char_k'], fr['how'] = dt['who'][0][1], f"details name {dt['who'][0][0]:.2f} at {dt['t0']}"
         elif ls and ls[0][0] >= 0.8 and (len(ls) < 2 or ls[1][0] < ls[0][0] - 0.1):
-            fr['char_k'], fr['how'] = ls[0][1], f'lc title {ls[0][0]:.2f}'
+            # 다른 캐릭터 광추와 덜 갈린다(차 0.1~0.25) — 「lc title close」로 적어 확실한 경우와 구별(감점)
+            fr['char_k'], fr['how'] = ls[0][1], f'lc title close {ls[0][0]:.2f}'
         else:
             fr['char_k'], fr['how'] = None, 'unknown'
         if fr['char_k'] is not None:
