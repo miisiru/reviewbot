@@ -27,7 +27,7 @@ CONF = {
     'start_unseen': 10,           # 재생 시작 1분 안에 전투 HUD 를 못 봄
     'not_shown_uncertain': 15,    # 「미표시」인데 다른 캐릭터 화면도 덜 잡힘(도구가 놓쳤을 수 있음)
 }
-CHECK_BELOW = 80
+CHECK_BELOW = 79   # 80% 는 CHECK 가 아니다(사용자, 2026-10-08: 80% 이상이면 누른다)
 START_WITHIN = 60   # 재생 시작 뒤 이 초 안에 전투가 보여야 한다(사용자, 2026-10-08: 30초 → 1분)
 UNREAD = {'decode_error', 'superimp_unread', 'eidolon_unread', 'hud_unread', 'uid_missing', 'start_unseen'}
 STOP_LOOP = {'superimp_unread', 'eidolon_unread'}
@@ -143,11 +143,14 @@ def run(rev, do_gp=True, reuse=False):
         else:
             if c['lc_match'] < 0.7:
                 # 제출 쪽 표기(「Dance Dance Dance」) 대신 게임 영어 이름(「Dance! Dance! Dance!」)으로 적는다
-                prob(f"{name} Light Cone mismatch (submitted '{judge.en_key(sub['lc'])}', video '{c['lc_seen']}')", 'lc_mismatch', char=name,
-                     sub=judge.en_key(sub['lc']), sub_s=sub['s'], seen_text=c['lc_seen'], seen_s=c.get('s_seen'))
+                shown = judge.en_key(sub['lc']) if sub['lc'] else 'Not Equipped'
+                prob(f"{name} Light Cone mismatch (submitted '{shown}', video '{c['lc_seen']}')", 'lc_mismatch', char=name,
+                     sub=shown if sub['lc'] else '', sub_s=sub['s'], seen_text=c['lc_seen'], seen_s=c.get('s_seen'))
             elif c['lc_match'] < 0.9:
                 ded('lc_name_fuzzy', f"{name}: Light Cone name match {c['lc_match']}")
-            if c.get('s_seen') is None:
+            if not sub['lc']:
+                pass          # 광추를 안 낀 제출(영상도 「미장착」): 중첩은 뜻이 없어 보지 않는다
+            elif c.get('s_seen') is None:
                 ded('superimp_unread', f'{name}: Superimposition unreadable')
             elif c['s_seen'] != sub['s']:
                 prob(f"{name} Superimposition mismatch (submitted S{sub['s']}, video S{c['s_seen']})", 'superimp_mismatch', char=name,

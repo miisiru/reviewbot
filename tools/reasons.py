@@ -52,6 +52,9 @@ def char_name(en, lang):
 
 
 def lc_name(en, lang):
+    if not en:      # 광추를 안 낀 제출
+        v = names.localize('Not Equipped', TM_LANG[lang])
+        return v[0] if v else 'Not Equipped'
     t = _names('lc')
     from judge import en_key
     k = en_key(en)

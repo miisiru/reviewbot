@@ -330,6 +330,29 @@ def superimp_from(lines):
     return (bestc[1], bestc[2]) if bestc[0] >= 0.45 else (None, None)
 
 
+_no_lc = None
+
+
+def no_lc_words():
+    """「광추 없음」 낱말(Not Equipped / Unequipped / 미장착 / 未装备 …, 13개 언어). 제출에서 광추가 빈 칸이면 화면이 이 낱말을 보여야 한다."""
+    global _no_lc
+    if _no_lc is None:
+        _no_lc = set()
+        for en in ('Not Equipped', 'Unequipped'):
+            for l in LANGS:
+                _no_lc.update(norm(v) for v in (localize(en, l) or []) if norm(v))
+    return _no_lc
+
+
+def lc_score(texts, c):
+    """광추 제목 칸 글들이 이 캐릭터의 제출 광추와 얼마나 맞는지. 제출 광추가 빈 칸이면 「광추 없음」 낱말과 맞는 정도."""
+    if c['lc']:
+        return max(best(t, c['lc'])[0] for t in texts)
+    ws = no_lc_words()
+    return max((1.0 if norm(t) in ws or any(len(w) >= 3 and w in norm(t) for w in ws) else
+                max((sim(t, w) for w in ws), default=0.0)) for t in texts)
+
+
 def path_words():
     if not PATH_WORDS:
         for en in ['Elation', 'Remembrance', 'Harmony', 'Destruction', 'Preservation', 'Nihility', 'Abundance', 'The Hunt', 'Erudition']:
@@ -423,7 +446,7 @@ def judge(rev):
             fr['panel_title'] = ' '.join(t for _, _, t in pl[:3])
             # 길 이름 줄(「记忆」 「환락」)은 그 낱말이 든 광추 이름(「记忆永不落幕」)과 부분 일치해 0.7 남짓이 나오므로 뺀다
             tl = [t for _, _, t in pl[:4] if norm(t) not in PATH_WORDS] or ['']
-            fr['lc_scores'] = sorted(((max(best(t, c['lc'])[0] for t in tl), k) for k, c in enumerate(chars) if c['lc']), reverse=True)
+            fr['lc_scores'] = sorted(((lc_score(tl, c), k) for k, c in enumerate(chars)), reverse=True)
             fr['superimp'], fr['superimp_line'] = superimp_from(pl)
         else:
             import tabs
@@ -620,7 +643,9 @@ def judge(rev):
         else:
             if r['lc_match'] < 0.7:
                 probs.append(f"Light Cone name? (seen '{r['lc_seen']}')")
-            if r['s_seen'] is None:
+            if not c['lc']:
+                pass          # 광추를 안 낀 제출: 중첩은 뜻이 없다
+            elif r['s_seen'] is None:
                 probs.append('Superimposition unreadable')
             elif r['s_seen'] != c['s']:
                 probs.append(f"Superimposition {c['s']} submitted, {r['s_seen']} seen")

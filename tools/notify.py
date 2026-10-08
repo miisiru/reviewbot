@@ -4,10 +4,10 @@ cfg = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".
 url = cfg["discord_webhook"]
 msg = sys.argv[1]; files = sys.argv[2:]
 if not files:
-    req = urllib.request.Request(url, data=json.dumps({"content": msg[:1990]}).encode(), headers={"Content-Type": "application/json", "User-Agent": "herta-review"})
+    req = urllib.request.Request(url, data=json.dumps({"content": msg[:1990], "flags": 4}).encode(), headers={"Content-Type": "application/json", "User-Agent": "herta-review"})
 else:
     b = uuid.uuid4().hex; body = b""
-    body += f"--{b}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n".encode() + json.dumps({"content": msg[:1990]}).encode() + b"\r\n"
+    body += f"--{b}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n".encode() + json.dumps({"content": msg[:1990], "flags": 4}).encode() + b"\r\n"
     for i, f in enumerate(files):
         ct = mimetypes.guess_type(f)[0] or "application/octet-stream"
         body += f"--{b}\r\nContent-Disposition: form-data; name=\"files[{i}]\"; filename=\"{os.path.basename(f)}\"\r\nContent-Type: {ct}\r\n\r\n".encode() + open(f, "rb").read() + b"\r\n"
