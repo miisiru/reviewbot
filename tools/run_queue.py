@@ -114,7 +114,7 @@ def build_row(b, video_url=''):
     elif b.get('e_seen') is None:
         issues.append((UNSURE, 'Eidolons unreadable'))
     elif b['e_seen'] != s['e']:
-        if b['e_seen'] - (b.get('e_gray') or 0) <= s['e'] <= b['e_seen']:
+        if s['e'] == b.get('e_alt'):
             issues.append((UNSURE, f'{uncertain_eidolons(b)} uncertain'))
         else:
             issues.append((BAD, f'video E{b["e_seen"]}'))
@@ -230,6 +230,10 @@ def main():
             sh([os.path.join(HERE, 'tabs.py'), rev, str(i)])
         r = sh([os.path.join(HERE, 'auto_judge.py'), rev])
         open(os.path.join(d, 'auto_log.txt'), 'w', encoding='utf8').write(r.stdout + r.stderr[-3000:])
+        if not os.path.exists(os.path.join(d, 'auto.json')):
+            # 영상을 못 받는 등으로 판정이 안 됐다 — 이 건만 건너뛰고 다음 건으로(auto_log.txt 에 까닭)
+            print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
+            continue
         res = json.load(open(os.path.join(d, 'auto.json'), encoding='utf8'))
         embed = report(rev, res, item)
         print(as_text(embed), f'\n({time.time() - t0:.0f}s)\n')

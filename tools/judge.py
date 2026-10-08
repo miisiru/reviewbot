@@ -201,17 +201,54 @@ def glyph_tpl():
     return _glyph
 
 
-def lock_states(f, lay):
-    """노드 6개마다 자물쇠 점수. 노드를 못 찾으면 None."""
+def node_names(f, pred, sp):
+    """노드마다 오른쪽 성혼 이름 줄의 흰 글자 픽셀(192×24). 캐릭터마다 이름이 달라 누구 화면인지 가르는 데 쓴다."""
+    H, W = f.shape[:2]
+    out = []
+    for px, py in pred:
+        c = f[int(max(0, py)):int(min(H, py + 0.5 * sp)), int(max(0, px + 0.55 * sp)):int(min(W, px + 4.0 * sp))]
+        if c.size == 0 or c.shape[0] < 3 or c.shape[1] < 3:
+            out.append(np.zeros((24, 192), bool))
+            continue
+        hsv = cv2.cvtColor(cv2.resize(c, (192, 24)), cv2.COLOR_BGR2HSV)
+        v = hsv[..., 2]
+        out.append((v > max(110, 0.7 * float(np.percentile(v, 99.5)))) & (hsv[..., 1] < 60))
+    return out
+
+
+def names_changed(a, b):
+    """두 프레임의 노드 이름 여섯 중 바뀐 것 수(둘 다 글자가 보이는 노드만). 캐릭터가 바뀌면 거의 다 바뀌고,
+    자막 상자가 생기거나 걷히면 가린 노드만 바뀐다(rev_zrakw 11.5초)."""
+    # 글자 획이 한두 픽셀 밀리는 것(압축 · 확대)은 같은 것으로: 서로 상대를 3px 불린 것 밖으로 나간 픽셀만 센다
+    k = np.ones((3, 3), np.uint8)
+    n = 0
+    for p, q in zip(a, b):
+        if p.sum() < 40 or q.sum() < 40:
+            continue
+        dp = cv2.dilate(p.astype(np.uint8), k, iterations=1).astype(bool)
+        dq = cv2.dilate(q.astype(np.uint8), k, iterations=1).astype(bool)
+        if ((p & ~dq).sum() + (q & ~dp).sum()) / max(1, p.sum() + q.sum()) > 0.35:
+            n += 1
+    return n
+
+
+def lock_states(f, lay, want_pred=False):
+    """노드 6개마다 자물쇠 점수. 노드를 못 찾으면 None. 노드 둘레 원이 안 잡힌 노드(영상에 박힌 자막 상자 등이
+    가렸다: rev_zrakw 4 · 5번)는 그 칸만 None — 자물쇠가 안 보인다고 열림으로 세지 않는다.
+    want_pred 면 (점수, 노드 자리)."""
     x, y0, sp = lay
     g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
-    pred = fit_nodes(circles(g, lay), sp)
+    cs = circles(g, lay)
+    pred = fit_nodes(cs, sp)
     if pred is None:
-        return None
+        return (None, None) if want_pred else None
     H, W = g.shape
     t0 = glyph_tpl()
     out = []
     for px, py in pred:
+        if min((np.hypot(px - cx, py - cy) for cx, cy in cs), default=1e9) >= 0.4 * sp:
+            out.append(None)
+            continue
         r = hp(g[int(max(0, py - 0.5 * sp)):int(min(H, py + 0.5 * sp)), int(max(0, px - 0.5 * sp)):int(min(W, px + 0.5 * sp))])
         sc = -1.0
         for m in (0.85, 1.0, 1.15):
@@ -219,11 +256,24 @@ def lock_states(f, lay):
             if r.shape[0] > t.shape[0] and r.shape[1] > t.shape[1]:
                 sc = max(sc, float(cv2.matchTemplate(r, t, cv2.TM_CCOEFF_NORMED).max()))
         out.append(round(sc, 2))
-    return out
+    return (out, pred) if want_pred else out
 
 
 LOCK_MIN = 0.6     # 자물쇠로 볼 점수(잠김 0.65~1.0, 열림 0.3~0.5 로 잰 값)
 LOCK_GRAY = (0.5, 0.65)   # 이 사이면 애매(신뢰도 감점)
+# 성혼은 차례로만 열린다: 앞 k 개 열림, 뒤는 잠김. 노드마다 따로 가르지 않고 여섯 점수에 가장 잘 맞는 k 를 고른다.
+# 잰 값(판 66편): 열림 0.25~0.57, 잠김 대부분 0.8~0.96(드물게 0.67) → 가운데 0.7
+LOCK_MID = 0.7
+FIT_SURE = 0.1     # 가장 잘 맞는 k 와 다음 k 의 어긋남 차이가 이보다 작으면 애매
+
+
+def eidolon_fit(sc):
+    """노드 점수 여섯 → (열린 수 k, 다음으로 맞는 k, 두 어긋남의 차)."""
+    # None(가려진 노드)은 어느 쪽이든 어긋남 0 — 앞뒤 노드가 정한다
+    cost = [sum(max(0.0, v - LOCK_MID) for v in sc[:k] if v is not None)
+            + sum(max(0.0, LOCK_MID - v) for v in sc[k:] if v is not None) for k in range(len(sc) + 1)]
+    order = sorted(range(len(cost)), key=lambda k: cost[k])
+    return order[0], order[1], round(cost[order[1]] - cost[order[0]], 3)
 
 
 def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
@@ -248,7 +298,8 @@ def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
     ref_nm = tabs.name_mask(ref, lay)
     # 이름이 같아진 뒤 0.1초는 쓰지 않는다 — 성혼 탭을 연 채 캐릭터를 넘기면 머리글이 먼저 바뀌고 노드 그림은 0.1초쯤 늦게 바뀐다
     # (30fps 로는 서너 장. 한 장만 빼면 앞 캐릭터 노드가 섞인다: rev_16nnmps 317.7초)
-    mx, nfr, same_since = None, 0, None
+    t_ref_used = t_ref
+    sts, same_since = [], None
     for t, f in fr:
         same = tabs.same_name(tabs.name_mask(f, lay), ref_nm) is not False
         if not same:
@@ -264,14 +315,27 @@ def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
         tab = tabs.which_tab(tabs.pale_gold(hsv, lay), tabs.gold_rows(hsv, lay))
         if tab is not None and tab != 'Eidolon':
             continue
-        st = lock_states(f, lay)
+        st, pred = lock_states(f, lay, want_pred=True)
         if st is None:
             continue
-        nfr += 1
-        mx = st if mx is None else [max(p, q) for p, q in zip(mx, st)]
-    if mx is None:
+        sts.append((t, st, node_names(f, pred, lay[2])))
+    if not sts:
         return None, None, 0
-    return sum(1 for v in mx if v >= LOCK_MIN), mx, nfr
+    # 머리글이 워터마크에 덮이면 이름 비교로 캐릭터가 바뀐 것을 못 가른다(rev_122c7wk 233.0초 앞 캐릭터,
+    # rev_1alwmmn 943.63초 다음 캐릭터) → 노드 옆 성혼 이름이 셋 넘게 한꺼번에 바뀐 자리로 나눠 기준 시각이 든 구간만 쓴다.
+    # 자물쇠 점수가 튀는 것으로 가르면 안 된다: 영상에 박힌 자막 상자가 걷히면 가렸던 노드 점수가 0.4 → 0.9 로 튄다(rev_zrakw)
+    segs = [[sts[0]]]
+    for prev, cur in zip(sts, sts[1:]):
+        if names_changed(prev[2], cur[2]) >= 3:
+            segs.append([])
+        segs[-1].append(cur)
+    seg = next((s for s in segs if s[0][0] - 0.02 <= t_ref_used <= s[-1][0] + 0.02), None) \
+        or min(segs, key=lambda s: min(abs(z[0] - t_ref_used) for z in s))
+    seg = [(t, st) for t, st, _ in seg]
+    mx = seg[0][1]
+    for _, st in seg[1:]:
+        mx = [q if p is None else p if q is None else max(p, q) for p, q in zip(mx, st)]
+    return sum(1 for v in mx if v is not None and v >= LOCK_MIN), mx, len(seg)
 
 
 def red_badge(f, lay, row=4):
@@ -443,11 +507,31 @@ def judge(rev):
         fr['who'] = sorted(((best(fr['header'], c['char'])[0], k) for k, c in enumerate(chars)), reverse=True)
         if fr['tab'] == 'LightCone':
             pl = read_lines(panel_crop(f), [model])[model]
-            fr['panel_title'] = ' '.join(t for _, _, t in pl[:3])
+            # 일본어 제목 위의 후리가나(「ながよる」 「かがや」 「ほし」)는 줄로 따로 잡혀 제목을 밀어낸다 → 짧은 히라가나만의 줄은 뺀다(rev_13uh4f6)
+            furi = lambda t: bool(re.fullmatch(r'[぀-ゟ\s・]{1,8}', t))
+            pl_t = [z for z in pl if not furi(z[2])]
+            fr['panel_title'] = ' '.join(t for _, _, t in pl_t[:3])
             # 길 이름 줄(「记忆」 「환락」)은 그 낱말이 든 광추 이름(「记忆永不落幕」)과 부분 일치해 0.7 남짓이 나오므로 뺀다
-            tl = [t for _, _, t in pl[:4] if norm(t) not in PATH_WORDS] or ['']
+            tl = [t for _, _, t in pl_t[:4] if norm(t) not in PATH_WORDS] or ['']
             fr['lc_scores'] = sorted(((lc_score(tl, c), k) for k, c in enumerate(chars)), reverse=True)
             fr['superimp'], fr['superimp_line'] = superimp_from(pl)
+            if fr['superimp'] is None:
+                # 「중첩 N」 줄은 광추 효과 칸 안에 있고 그 칸은 저절로 내려간다 — 고른 프레임에서 줄이 위로 사라졌으면
+                # 같은 광추 구간의 다른 프레임(앞 1초 ~ 뒤 0.8초, 이웃 프레임은 넘지 않음)에서 읽는다(rev_3eq9x1)
+                import tabs
+                video = os.path.join(d, vids[fr['vid']].get('file', f"video{fr['vid']}.mp4"))
+                _, W, H = tabs.probe(video)
+                ts = sorted(g['t'] for g in frames if g['vid'] == fr['vid'] and g is not fr)
+                a = max([fr['t'] - 1.0] + [t + 0.05 for t in ts if t < fr['t']])
+                b = min([fr['t'] + 0.8] + [t - 0.05 for t in ts if t > fr['t']])
+                votes = []
+                for _, g in tabs.frames(video, max(0, a), max(0.1, b - a), 10, W, H):
+                    sp, line = superimp_from(read_lines(panel_crop(g), [model])[model])
+                    if sp is not None:
+                        votes.append((sp, line))
+                if votes:
+                    sp = max({v for v, _ in votes}, key=lambda v: sum(1 for x, _ in votes if x == v))
+                    fr['superimp'], fr['superimp_line'] = sp, next(l for v, l in votes if v == sp) + f' (nearby frames {len(votes)})'
         else:
             import tabs
             video = os.path.join(d, vids[fr['vid']].get('file', f"video{fr['vid']}.mp4"))
@@ -622,6 +706,10 @@ def judge(rev):
         if eif:
             f0 = max(eif, key=lambda f: f.get('lock_frames') or 0)
             act = 1 if f0['activatable'] else 0
+            sc = f0.get('lock_scores')
+            fit = eidolon_fit(sc) if sc and len(sc) == 6 else None
+            if fit:
+                f0['locks'] = 6 - fit[0]
             r['locks'] = f0['locks']
             r['activatable'] = bool(f0['activatable'])
             r['e_seen'] = None if f0['locks'] is None else max(0, 6 - f0['locks'] - act)
@@ -631,8 +719,11 @@ def judge(rev):
             # (행적 화면 섞임 없음) 두 장이면 믿는다
             if f0['locks'] == 0 and (f0.get('lock_frames') or 0) < 2 and names_read < 5:
                 r['e_seen'] = None        # 자물쇠 0개를 흐린 프레임 한두 장으로 단정하지 않는다(연출 중이면 자물쇠가 안 보인다)
-            gray = sum(1 for v in (f0.get('lock_scores') or []) if LOCK_GRAY[0] <= v < LOCK_MIN)
-            r['e_gray'] = gray      # 열림으로 셌지만 자물쇠일 수도 있는 노드 수
+            # 애매한 범위: 가장 잘 맞는 k 와 다음 k 가 거의 같으면 둘 사이 어느 쪽일 수도 있다
+            r['e_alt'] = None
+            if fit and r['e_seen'] is not None and fit[2] < FIT_SURE:
+                r['e_alt'] = max(0, fit[1] - act)
+            r['e_gray'] = (r['e_seen'] - r['e_alt']) if r['e_alt'] is not None and r['e_alt'] < r['e_seen'] else 0
             r['e_frames'] = f0.get('lock_frames')
             r['lock_scores'] = f0.get('lock_scores')
             r['e_t'] = f0['t']
@@ -653,7 +744,7 @@ def judge(rev):
             probs.append('Eidolons not shown')
         elif r['e_seen'] is None:
             probs.append('Eidolons unreadable')
-        elif r['e_seen'] != c['e'] and not (r['e_seen'] - r['e_gray'] <= c['e'] <= r['e_seen']):
+        elif r['e_seen'] != c['e'] and c['e'] != r.get('e_alt'):
             probs.append(f"Eidolon E{c['e']} submitted, E{r['e_seen']} seen (locks {r['locks']}{', activatable' if r['activatable'] else ''})")
         r['problems'] = probs
         out.append(r)

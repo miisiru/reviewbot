@@ -19,7 +19,7 @@ CONF = {
     'eidolon_unread': 20,         # 성혼을 못 읽음(노드를 못 찾음 · 흐린 프레임뿐)
     'eidolon_few_frames': 5,      # 성혼을 1~2 프레임으로만 읽음
     'eidolon_gray': 5,            # 자물쇠인지 애매한 노드 하나당
-    'eidolon_activatable': 5,     # 빨간 「!」(활성화 가능) — 하나로 셈
+    # 'eidolon_activatable': 감점 없음(사용자, 2026-10-09)
     'hud_unread': 30,             # 전투 끝 HUD 값을 못 읽음
     'hud_weak': 5,                # HUD 값 읽기 일치율 50~80%
     'hud_poor': 15,               # HUD 값 읽기 일치율 50% 미만
@@ -63,10 +63,11 @@ def start_seen(rev, vid, t0, model):
 
 
 def uncertain_eidolons(c):
-    """잠김 · 열림 점수가 애매한 성혼 노드를 「E3」 꼴로(노드 순서 = 성혼 단계)."""
-    sc = c.get('lock_scores') or []
-    lo, hi = judge.LOCK_GRAY
-    return ', '.join(f'E{i + 1}' for i, v in enumerate(sc) if lo <= v < judge.LOCK_MIN) or '?'
+    """잠김 · 열림이 애매한 성혼 단계를 「E3」 꼴로: 읽은 단계와 다음으로 맞는 단계 사이의 노드(노드 순서 = 성혼 단계)."""
+    if c.get('e_alt') is None or c.get('e_seen') is None:
+        return '?'
+    a, b = sorted((c['e_seen'], c['e_alt']))
+    return ', '.join(f'E{i}' for i in range(a + 1, b + 1)) or '?'
 
 
 def tstart(url):
@@ -160,19 +161,17 @@ def run(rev, do_gp=True, reuse=False):
         elif c.get('e_seen') is None:
             ded('eidolon_unread', f'{name}: Eidolons unreadable')
         else:
-            lo = c['e_seen'] - (c.get('e_gray') or 0)
-            if not (lo <= sub['e'] <= c['e_seen']):
+            if sub['e'] not in (c['e_seen'], c.get('e_alt')):
                 prob(f"{name} Eidolons mismatch (submitted E{sub['e']}, video E{c['e_seen']})", 'eidolon_mismatch', char=name,
                      sub=sub['e'], video=c['e_seen'])
             # 두 장이라도 노드 여섯이 모두 뚜렷하면(자물쇠 0.8 이상 · 열림 0.45 미만) 감점하지 않는다
-            blurry = any(0.45 <= v < 0.8 for v in (c.get('lock_scores') or [0.6]))
+            blurry = any(v is not None and 0.58 <= v < 0.8 for v in (c.get('lock_scores') or [0.6]))
             if (c.get('e_frames') or 0) < 2 or ((c.get('e_frames') or 0) < 3 and blurry):
                 ded('eidolon_few_frames', f"{name}: Eidolons read from {c.get('e_frames')} frame(s)")
-            if c.get('e_gray'):
-                ded('eidolon_gray', f"{name}: {uncertain_eidolons(c)} uncertain (locked or not)", c['e_gray'])
-            if c.get('activatable'):
-                ded('eidolon_activatable', f'{name}: activatable Eidolon (red !) counted as not activated')
-    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'lock_scores', 'lc_t', 'e_t')}
+            if c.get('e_alt') is not None:
+                ded('eidolon_gray', f"{name}: {uncertain_eidolons(c)} uncertain (locked or not)", abs(c['e_seen'] - c['e_alt']))
+            # 빨간 「!」(활성화 가능, 아직 안 켬)는 활성화 안 한 것으로 세고 감점하지 않는다(사용자, 2026-10-09: 정상 상태)
+    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t')}
                     for c in b['chars']]
     tm('build')
     # 2) UID
@@ -185,8 +184,9 @@ def run(rev, do_gp=True, reuse=False):
     mode = s0.get('mode')
     plight = 'Plight' in (s0.get('boss_name') or '')
     run_vid = next((k for k, v in enumerate(vids) if v.get('run_part')), 0)
+    cyc_mode = mode in ('moc', 'pf')      # 혼돈의 기억 · 허구 이야기: 오른쪽 위 「소모 라운드」가 없고 행동 순서의 모래시계 칸으로 센다
     if 'hud' not in cache:
-        cache['hud'] = hud.scan(rev, run_vid, model=model, plight=plight)['final']
+        cache['hud'] = {} if cyc_mode else hud.scan(rev, run_vid, model=model, plight=plight)['final']
     fin = cache['hud']
     out['hud'] = fin
 
@@ -214,7 +214,27 @@ def run(rev, do_gp=True, reuse=False):
                 prob(f"Category mismatch (submitted {sub_cat}, should be {'0 AV' if rav == 2000 else 'Clear'})", 'category_mismatch',
                      sub=sub_cat, should='0 AV' if rav == 2000 else 'Clear')
     else:
-        cyc = hv('cycles')
+        pf_ambiguous = False
+        if cyc_mode:
+            if 'cycles_hg' not in cache:
+                r = hud.scan_cycles(rev, run_vid, mode=mode, start=float(tstart(s0.get('video_url'))))
+                cache['cycles_hg'] = {k: r.get(k) for k in ('value', 'first', 'last', 'counter', 'note', 'lost_after', 'battle_until', 'banner')} | {'n': len(r['reads'])}
+            ch = cache['cycles_hg']
+            cyc = ch.get('value')
+            # 「Remaining Cycles: 0」 띠를 봤으면 모래시계 칸을 끝까지 못 읽었어도 4 사이클
+            if cyc is not None and ch.get('lost_after') is not None and ch.get('banner') is None:
+                ded('hud_unread', f"hourglass cell last read {ch['last'][1]} at {ch['lost_after']}, battle continued to {ch['battle_until']} (counter at the end unknown)")
+                cyc, pf_ambiguous = None, 'checked'
+            if cyc is not None:
+                if mode == 'pf':
+                    how = (f"\"Remaining Cycles: 0\" banner at {ch['banner']}" if ch.get('banner') is not None
+                           else f"hourglass counter {ch.get('counter')} at the end"
+                           + (', no "Remaining Cycles: 0" banner' if ch.get('counter') == 0 else ''))
+                else:
+                    how = f"remaining-cycle counter {ch['first'][1]} -> {ch['last'][1]}"
+                out['checks'].append(f'Cycles (action order): {cyc} ({how})')
+        else:
+            cyc = hv('cycles')
         if plight:
             pl = hv('plight')
             if pl is None:
@@ -225,10 +245,11 @@ def run(rev, do_gp=True, reuse=False):
                 if s0.get('action_value') and int(s0['action_value']) != used:
                     prob(f"Action Value mismatch (submitted {s0['action_value']}, video {used})", 'av_mismatch', sub=s0['action_value'], video=used)
         if cyc is None:
-            if not plight:
-                ded('hud_unread', 'Cycles Used at Battle Over not read')
+            if not plight and pf_ambiguous != 'checked':
+                ded('hud_unread', 'Cycles Used at Battle Over not read' if not cyc_mode else 'action-order hourglass counter not read')
         else:
-            out['checks'].append(f'Cycles (HUD): {cyc} at Battle Over')
+            if not cyc_mode:
+                out['checks'].append(f'Cycles (HUD): {cyc} at Battle Over')
             if sub_cat == '0-Cycle' and cyc != 0:
                 prob(f'Consumed Cycles mismatch (submitted 0 Cycles, video {cyc} Cycles)', 'cycles_mismatch', sub=0, video=cyc)
             elif sub_cat != '0-Cycle' and cyc == 0:
@@ -260,7 +281,8 @@ def run(rev, do_gp=True, reuse=False):
     t0 = tstart(url)
     if len(sides) == 1:
         if 'start' not in cache:
-            cache['start'] = start_seen(rev, run_vid, t0, model)
+            cache['start'] = (hud.first_cell_time(rev, run_vid, t0, START_WITHIN + 2, model) if mode in ('moc', 'pf')
+                              else start_seen(rev, run_vid, t0, model))
         st = cache['start']
         out['start'] = st
         if st is None:

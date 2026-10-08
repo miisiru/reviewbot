@@ -298,6 +298,184 @@ def final_value(reads):
     return out
 
 
+# ---------- 혼돈의 기억(MoC) · 허구 이야기(PF): 행동 순서 줄의 모래시계 칸 ----------
+# MoC 「⧗ | 29」 = 남은 사이클 수. 사이클이 하나 지날 때마다 1 씩 준다 → 쓴 사이클 = 처음 값 − 끝 값(두 전반 · 후반 합쳐서)
+# PF  「⧗ | 3」  = 사이클 카운터. 끝나는 순간 남은 카운터 N 으로 3 − N(⧗3 → 0, ⧗0 → 3, ⧗0 까지 지나 행동값 소진 → 4)
+_HG = None
+
+
+def _hg_binar(img):
+    """밝은 글자를 둘레보다 밝은 곳(top-hat)으로 가른다. 칸 바탕이 빨갛든 어둡든 같은 기준."""
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    k = max(15, int(img.shape[0] * 0.035)) | 1
+    th = cv2.morphologyEx(g, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
+    return ((th > 45) & (g > 110) & (hsv[..., 1] < 120)).astype(np.uint8)
+
+
+def _is_hourglass(m):
+    """글리프 마스크가 모래시계(실제 영상에서 자른 틀, tools/hourglass_tpl.png)와 닮았는지."""
+    global _HG
+    h, w = m.shape
+    if h < 6 or w < 3 or not (0.5 <= w / h <= 0.9):
+        return False
+    if _HG is None:
+        _HG = cv2.imread(os.path.join(HERE, 'hourglass_tpl.png'), 0).astype(np.float32) / 255
+    r = cv2.resize(m.astype(np.float32), (_HG.shape[1], _HG.shape[0]), interpolation=cv2.INTER_AREA)
+    a, b = r - r.mean(), _HG - _HG.mean()
+    return float((a * b).sum() / (np.sqrt((a * a).sum() * (b * b).sum()) + 1e-6)) >= 0.65
+
+
+def hourglass_cells(f):
+    """행동 순서 줄의 모래시계 칸들 [(y, 오른쪽 숫자 글)] 위에서부터. 모래시계는 모양(틀)으로 찾고 오른쪽 숫자는 따로 읽는다."""
+    H, W = f.shape[:2]
+    c = f[int(0.03 * H):int(0.85 * H), 0:int(0.20 * W)]
+    c = cv2.resize(c, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    m = _hg_binar(c)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(m, 8)
+    out = []
+    for i in range(1, n):
+        x, y, w, h, a = st[i]
+        if not (0.024 * H <= h <= 0.07 * H):
+            continue
+        if not _is_hourglass((lab[y:y + h, x:x + w] == i).astype(np.uint8)):
+            continue
+        x0, x1 = x + w + 1, min(c.shape[1], x + w + int(4.5 * h))
+        band = np.ascontiguousarray(m[max(0, y - h // 4):y + h + h // 4, x0:x1])
+        if band.shape[0] < 3 or band.shape[1] < 3:
+            continue
+        k, _, s2, _ = cv2.connectedComponentsWithStats(band, 8)
+        comps = sorted(tuple(int(v) for v in s2[j][:4]) for j in range(1, k) if s2[j][3] >= 0.6 * h)
+        digits = [q for q in comps if q[2] > 0.26 * q[3]]
+        if not digits:
+            continue
+        grp = [digits[0]]
+        for q in digits[1:]:
+            if q[0] - (grp[-1][0] + grp[-1][2]) > 0.6 * h:
+                break
+            grp.append(q)
+        gx1 = grp[-1][0] + grp[-1][2] + int(0.6 * h)
+        # 왼쪽은 구분선(「|」) 바로 뒤부터(구분선이 「1」로 읽혀 「|29」가 「129」가 되는 것을 막는다), 오른쪽은 여백까지
+        seps = [q for q in comps if q[2] <= 0.26 * q[3] and q[0] < grp[0][0]]
+        left = (seps[-1][0] + seps[-1][2] + 2) if seps else 0
+        crop = c[max(0, y - h // 3):y + h + h // 3, x0 + left:x0 + gx1]
+        if crop.size == 0:
+            continue
+        s = 48 / crop.shape[0]
+        txt = rec_text(cv2.resize(crop, None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC))
+        d = re.sub(r'\D', '', txt)
+        if d:
+            out.append((int(y / 2), d))
+    return sorted(out)
+
+
+def scan_cycles(rev, vid=0, mode='moc', start=0.0):
+    """MoC · PF 의 쓴 사이클 수. 영상 처음(start)부터 쇼케이스 전까지 1초에 한 장씩 모래시계 칸을 읽는다.
+    → {'value': 쓴 사이클, 'reads': [(t, 값)], 'first', 'last', 'note'}"""
+    d = os.path.join(ROOT, rev)
+    vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8')) if os.path.exists(os.path.join(d, 'videos.json')) else [{'file': 'video0.mp4'}]
+    video = os.path.join(d, vids[vid].get('file', f'video{vid}.mp4'))
+    dur, W, H = tabs.probe(video)
+    end = dur
+    tl = os.path.join(d, f'tabs{vid}', 'timeline.txt')
+    if os.path.exists(tl):
+        ws = [float(m.group(1)) for m in re.finditer(r'window ([\d.]+)-', open(tl, encoding='utf8').read())]
+        late = [w for w in ws if w > 0.3 * dur]
+        if late:
+            end = min(late)
+    reads = []
+    for t, f in tabs.frames(video, start, end - start, 1, W, H):
+        cs = hourglass_cells(f)
+        if not cs:
+            continue
+        v = cs[0][1]               # 가장 앞(위) 칸
+        if mode == 'pf':
+            v = int(v[-1])         # 카운터는 한 자리(「13」 = 구분선 + 3)
+            if v > 3:
+                continue
+        else:
+            if len(v) == 3 and v[0] == '1':
+                v = v[1:]          # 구분선이 「1」로 붙은 것
+            v = int(v)
+            if v > 99:
+                continue
+        reads.append((round(t, 1), v))
+    out = {'reads': reads, 'value': None, 'note': ''}
+    if not reads:
+        return out
+    # 한 번만 나온 값은 잘못 읽은 것으로 보고 뺀다(연속 두 번 이상 · 모두 세 번 이상 나온 값만)
+    cnt = {}
+    for _, v in reads:
+        cnt[v] = cnt.get(v, 0) + 1
+    stable = [(t, v) for i, (t, v) in enumerate(reads)
+              if cnt[v] >= 3 or (i + 1 < len(reads) and reads[i + 1][1] == v) or (i and reads[i - 1][1] == v)]
+    if not stable:
+        return out
+    out['first'], out['last'] = stable[0], stable[-1]
+    # 마지막으로 읽은 뒤에도 전투가 이어졌는지(왼쪽 위 웨이브 표시). 소환물로 행동 순서가 길어지면 모래시계 칸이
+    # 화면 아래로 밀려 끝까지 안 보인다(rev_7dqskh 646초에 「⧗1」로 끊기고 전투는 820초까지) → 끝 값을 모르는 것
+    last_t = reads[-1][0]
+    seen = None
+    for t, f in tabs.frames(video, last_t + 5, max(1, end - last_t - 5), 0.2, W, H):
+        c = f[0:int(0.2 * H), 0:int(0.16 * W)]
+        if any(re.search(r'\b[1-5]\s*/\s*[1-5]\b', b[4]) for b in ocr(c, 'chinese')):
+            seen = round(t, 1)
+    if seen is not None and seen - last_t > 15:
+        out['lost_after'], out['battle_until'] = last_t, seen
+    if mode == 'pf':
+        tail = [v for _, v in stable[-5:]]
+        n = max(set(tail), key=tail.count)
+        # 카운터는 줄기만 한다. 전투가 끝나기 직전 마지막 칸은 한 번만 보이기도 한다(rev_n52sr9 392초 「⧗1」) →
+        # 마지막 안정 값보다 꼭 1 작은 값이 그 뒤에 읽혔으면 받는다
+        later = [v for t, v in reads if t > stable[-1][0]]
+        if later and later[-1] == n - 1:
+            n = later[-1]
+        out['value'] = 3 - n
+        out['counter'] = n
+        if n == 0:
+            # ⧗0 까지 지나 행동값을 다 쓰면 끝에 「Remaining Cycles: 0」 띠 → 4 사이클
+            bt = cycles_out_banner(video, last_t - 2, min(end, last_t + 240), W, H)
+            if bt is not None:
+                out['value'], out['banner'] = 4, bt
+                out['note'] = f'"Remaining Cycles: 0" banner at {bt}: Action Value ran out'
+            else:
+                out['note'] = 'counter 0 at the end, no "Remaining Cycles: 0" banner'
+    else:
+        out['value'] = max(0, stable[0][1] - stable[-1][1])
+    return out
+
+
+def cycles_out_banner(video, a, b, W, H, model='chinese'):
+    """PF 에서 행동값을 다 써 끝날 때 화면 위쪽 가운데에 1초쯤 뜨는 빨간 띠 「Remaining Cycles: 0」(剩余轮次：0 …).
+    이것이 보이면 4 사이클, 없으면 ⧗0 으로 끝난 3 사이클(사용자, 2026-10-09). 5fps 로 빨간 띠가 있는 프레임만 읽는다
+    → 처음 본 시각(못 보면 None)"""
+    for t, f in tabs.frames(video, max(0, a), max(1, b - a), 5, W, H):
+        c = f[int(0.2 * H):int(0.38 * H), int(0.25 * W):int(0.75 * W)]
+        hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
+        red = ((hsv[..., 0] < 8) | (hsv[..., 0] > 172)) & (hsv[..., 1] > 110) & (hsv[..., 2] > 120)
+        rows = red.mean(axis=1) > 0.35           # 띠는 가로로 넓다(화면 폭의 30% 남짓)
+        if rows.sum() < 0.03 * H:
+            continue
+        for bx in ocr(c, model):
+            if re.search(r'[:：]\s*0\s*$', bx[4].strip()):
+                return round(t, 1)
+    return None
+
+
+def first_cell_time(rev, vid, t0, within, model='chinese'):
+    """t0 뒤 within 초 안에 MoC · PF 전투 화면이 처음 보이는 시각: 왼쪽 위 웨이브 표시(「⚑ 1/3」 「1/2」).
+    모래시계 칸은 전투 초반에 행동 순서 아래로 밀려 안 보이기도 해서(rev_121hwl6 84초에야 보임) 쓰지 않는다."""
+    d = os.path.join(ROOT, rev)
+    vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
+    video = os.path.join(d, vids[vid]['file'])
+    dur, W, H = tabs.probe(video)
+    for t, f in tabs.frames(video, t0, min(within, dur - t0), 1, W, H):
+        c = f[0:int(0.2 * H), 0:int(0.16 * W)]   # 위아래 검은 띠가 있는 영상(rev_13uh4f6)은 표시가 아래로 밀린다
+        if any(re.search(r'\b[1-5]\s*/\s*[1-5]\b', b[4]) for b in ocr(c, model)):
+            return round(t, 1)
+    return None
+
+
 if __name__ == '__main__':
     rev = sys.argv[1]
     p = json.load(open(os.path.join(ROOT, rev, 'review.json'), encoding='utf8'))['payload']
