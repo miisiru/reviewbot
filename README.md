@@ -293,15 +293,26 @@ python tools/run_queue.py --fetch --limit 5                 # fetch the queue, j
 python tools/run_queue.py --fetch --limit 5 --claim         # mark "in review" before judging
 python tools/run_queue.py rev_abc123 --webhook question     # one item, post the result to the question webhook
 ```
-Example output:
+The Discord report is an embed laid out like the Discord bot's submission embed (color = verdict: green APPROVE,
+red REJECT, amber CHECK; the title links to the review page). Example terminal output:
 ```
-**REJECT** run_1nl1xos  Confidence: 100%
-- Cerydra Light Cone mismatch (submitted 'Dance Dance Dance', video '… 황금 피가 새긴 시대 …')
-- Cerydra Superimposition mismatch (submitted S5, video S1)
-- Cycles (HUD): 0 at Battle Over
-Showcase: <https://youtu.be/…&t=229>
-Video: <https://youtu.be/…>
-Review: <https://theherta.com/mod?review=rev_…>
+REJECT · 100% confidence
+**Author:** …
+**Season:** 3.6
+**Status:** Not decided (human)
+[❌ Problems]
+• Cerydra Light Cone mismatch (submitted 'Dance! Dance! Dance!', video '… 황금 피가 새긴 시대 …')
+• Cerydra Superimposition mismatch (submitted S5, video S1)
+[MOC | Gepard | 0-Cycle | 0 Cycles | 5L / 1S]
+✅ **Firefly** (E2S1) — *Whereabouts Should Dreams Rest*
+└ LC [3:50](https://youtu.be/…?t=230) · E [4:01](https://youtu.be/…?t=241)
+❌ **Cerydra** (E0S5) — *Dance! Dance! Dance!*
+└ LC [4:10](https://youtu.be/…?t=250) · E [4:20](https://youtu.be/…?t=260) · **video LC '… 황금 피가 새긴 시대 …'** · **video S1**
+[Battle (HUD)]
+• Cycles (HUD): 0 at Battle Over
+[Links]
+[Video](https://youtu.be/…) · [Showcase 3:49](https://youtu.be/…&t=229) · [Review](https://theherta.com/mod?review=rev_…)
+ID: run_1nl1xos  •  Review ID: rev_…
 ```
 
 ### 3-2. Step by step
@@ -351,7 +362,7 @@ directly: `scan_sheet.sh`, `gp_fast.sh`, `overview.sh`, `hdr_strip.sh`, `top_she
 | `tools/auto_judge.py` | combines everything into a verdict and confidence |
 | `tools/build_eidolon_names.mjs` | builds the Eidolon name table |
 | `tools/get_models.py` | downloads the OCR models |
-| `tools/ask.py` · `tools/notify.py` | Discord webhooks |
+| `tools/ask.py` · `tools/notify.py` · `tools/webhook.py` | Discord webhooks |
 | `tools/run_item.py` · `confidence.py` · `*.sh` · `frames.py` … | sheets for a human (or AI) to look at |
 | `auto/ocr.py` | RapidOCR + per-language PP-OCRv5 recognition models. GPU (DirectML) only for build reading, CPU for the rest |
 | `auto/names.py` | English game name → TextMap names in each language |

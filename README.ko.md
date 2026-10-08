@@ -248,15 +248,26 @@ python tools/run_queue.py --fetch --limit 5                 # 대기열 받고 �
 python tools/run_queue.py --fetch --limit 5 --claim         # 판정 전에 「검토 중」 표시
 python tools/run_queue.py rev_abc123 --webhook question     # 한 건만, 결과를 질문 웹후크로
 ```
-출력 예:
+디스코드 보고는 디스코드 봇의 제출 임베드와 같은 짜임의 임베드입니다(색 = 판정: 초록 APPROVE, 빨강 REJECT, 노랑 CHECK,
+제목을 누르면 검토 페이지). 터미널 출력 예:
 ```
-**REJECT** run_1nl1xos  Confidence: 100%
-- Cerydra Light Cone mismatch (submitted 'Dance Dance Dance', video '… 황금 피가 새긴 시대 …')
-- Cerydra Superimposition mismatch (submitted S5, video S1)
-- Cycles (HUD): 0 at Battle Over
-Showcase: <https://youtu.be/…&t=229>
-Video: <https://youtu.be/…>
-Review: <https://theherta.com/mod?review=rev_…>
+REJECT · 100% confidence
+**Author:** …
+**Season:** 3.6
+**Status:** Not decided (human)
+[❌ Problems]
+• Cerydra Light Cone mismatch (submitted 'Dance! Dance! Dance!', video '… 황금 피가 새긴 시대 …')
+• Cerydra Superimposition mismatch (submitted S5, video S1)
+[MOC | Gepard | 0-Cycle | 0 Cycles | 5L / 1S]
+✅ **Firefly** (E2S1) — *Whereabouts Should Dreams Rest*
+└ LC [3:50](https://youtu.be/…?t=230) · E [4:01](https://youtu.be/…?t=241)
+❌ **Cerydra** (E0S5) — *Dance! Dance! Dance!*
+└ LC [4:10](https://youtu.be/…?t=250) · E [4:20](https://youtu.be/…?t=260) · **video LC '… 황금 피가 새긴 시대 …'** · **video S1**
+[Battle (HUD)]
+• Cycles (HUD): 0 at Battle Over
+[Links]
+[Video](https://youtu.be/…) · [Showcase 3:49](https://youtu.be/…&t=229) · [Review](https://theherta.com/mod?review=rev_…)
+ID: run_1nl1xos  •  Review ID: rev_…
 ```
 
 ### 3-2. 단계별로
@@ -300,7 +311,7 @@ Claude Code 같은 에이전트가 Chrome DevTools 로 검토 페이지를 열�
 | `tools/auto_judge.py` | 모두 합쳐 판정 · 신뢰도 |
 | `tools/build_eidolon_names.mjs` | 성혼 이름 표 만들기 |
 | `tools/get_models.py` | OCR 모델 받기 |
-| `tools/ask.py` · `tools/notify.py` | 디스코드 웹후크 |
+| `tools/ask.py` · `tools/notify.py` · `tools/webhook.py` | 디스코드 웹후크 |
 | `tools/run_item.py` · `confidence.py` · `*.sh` · `frames.py` … | 사람(또는 AI)이 볼 시트 만들기 |
 | `auto/ocr.py` | RapidOCR + 언어별 PP-OCRv5 인식 모델. 빌드 읽기만 GPU(DirectML), 나머지는 CPU |
 | `auto/names.py` | 영어 게임 이름 → 언어별 TextMap 이름 |
