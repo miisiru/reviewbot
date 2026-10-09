@@ -59,6 +59,7 @@ def decoded_ratio(v, expect=None):
     return min(1.0, int(f[-1]) / max(1.0, dur))
 
 
+DL_TIMEOUT = 6 * 60      # 영상 받기 한 번의 최대 시간(yt-dlp 대비책)
 MAX_SECONDS = 20 * 60   # 이보다 긴 영상은 받지 않고 CHECK(사용자, 2026-10-09)
 
 BILI_HOSTS = ["upos-sz-mirrorcosov.bilivideo.com", "upos-sz-mirrorali.bilivideo.com", "upos-sz-mirrorcos.bilivideo.com"]
@@ -81,7 +82,7 @@ def bili_fast(u, fmt, v):
     for src in dict.fromkeys(srcs):
         if os.path.exists(tmp):
             os.remove(tmp)
-        r = subprocess.run(["curl", "-s", "-f", "-L", "--speed-limit", "500000", "--speed-time", "15", "--connect-timeout", "10",
+        r = subprocess.run(["curl", "-s", "-f", "-L", "--speed-limit", "500000", "--speed-time", "15", "--connect-timeout", "10", "--max-time", "300",
                             "-H", "Referer: https://www.bilibili.com/", "-A", "Mozilla/5.0", "-o", tmp, src])
         if r.returncode == 0 and os.path.exists(tmp):
             ok = True
@@ -107,9 +108,21 @@ def download(u, v):
         else:
             # 빌리빌리 CDN 은 10M 조각 요청에 639바이트 오류 응답만 줘서 재시도로 수십 분을 버린다 → 조각 없이 받으면 수 초
             chunk = [] if "bilibili.com" in u else ["--http-chunk-size", "10M"]
-            p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
-                                "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s", "--no-simulate", u],
-                               capture_output=True, text=True, encoding="utf8", errors="replace")
+            try:
+                p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
+                                    "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s", "--no-simulate", u],
+                                   capture_output=True, text=True, encoding="utf8", errors="replace", timeout=DL_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                # 한 건에 20분 넘게 걸리던 느린 받기(rev_1pm6uvd, 100KB/s): 6분이 넘으면 포기하고 못 받은 것으로(사람 확인)
+                for f in os.listdir(os.path.dirname(v)):
+                    if f.startswith(os.path.basename(v)) and f != os.path.basename(v):
+                        try:
+                            os.remove(os.path.join(os.path.dirname(v), f))
+                        except OSError:
+                            pass
+                if os.path.exists(v):
+                    os.remove(v)
+                return log + f"\nERROR: download too slow (gave up after {DL_TIMEOUT // 60} min)\n"
             log += p.stdout + p.stderr[-1000:]
             out = p.stdout
             if chunk and "403" in p.stderr:
