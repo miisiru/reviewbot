@@ -66,7 +66,7 @@ BILI_HOSTS = ["upos-sz-mirrorcosov.bilivideo.com", "upos-sz-mirrorali.bilivideo.
 
 
 def bili_fast(u, fmt, v):
-    """빌리빌리: 영상 주소만 yt-dlp 로 얻고, CDN 미러를 빠른 곳(cosov)으로 바꿔 curl 로 받는다.
+    """빌리빌리: 영상 주소만 yt-dlp 로 얻고, 빠른 CDN 서버를 골라 8갈래로 나눠 받는다(bili_dl).
     빌리빌리는 요청마다 미러를 다르게 주는데 어떤 미러(G-Core 오사카 등)는 80KB/s 라 한 건에 수십 분 걸렸다.
     → yt-dlp --print 꼴의 「길이|제목」, 못 받으면 None(그때는 yt-dlp 로 받는다)"""
     p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "-f", fmt, "--print", "%(duration)s|%(title)s", "--print", "urls", u],
@@ -76,18 +76,9 @@ def bili_fast(u, fmt, v):
         return None
     orig = lines[1].strip()
     tmp = v + ".m4s"
-    # 미러를 차례로: 15초 동안 500KB/s 밑이면 끊고 다음 미러(cosov 도 가끔 멈춘다: rev_p81y5s 12분)
-    srcs = [re.sub(r"^https://upos-[a-z0-9-]+\.bilivideo\.com", f"https://{h}", orig) for h in BILI_HOSTS] + [orig]
-    ok = False
-    for src in dict.fromkeys(srcs):
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        r = subprocess.run(["curl", "-s", "-f", "-L", "--speed-limit", "500000", "--speed-time", "15", "--connect-timeout", "10", "--max-time", "300",
-                            "-H", "Referer: https://www.bilibili.com/", "-A", "Mozilla/5.0", "-o", tmp, src])
-        if r.returncode == 0 and os.path.exists(tmp):
-            ok = True
-            break
-    if not ok:
+    # 서버 고르기 + 여러 갈래로 나눠 받기(tools/bili_dl.py, Bili23-Downloader 의 서버 목록 · 블랙리스트 사용)
+    import bili_dl
+    if not bili_dl.download(orig, tmp):
         if os.path.exists(tmp):
             os.remove(tmp)
         return None
