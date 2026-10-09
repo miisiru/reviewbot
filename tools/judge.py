@@ -141,13 +141,24 @@ def viewport(f):
 
 
 def title_band_lines(f, model):
-    """광추 제목이 나오는 패널 위쪽 띠(화면 높이 7~20%)만 3배로 키워 읽은 줄(짧은 제목이 전체 읽기에서 빠지는 일이 있다)."""
+    """광추 제목이 나오는 패널 위쪽 띠를 읽은 줄. 두 글자짜리 짧은 제목(「焚影」)은 글자 찾기(detection)가 아예 못 잡는다
+    (rev_1sqwwaj · rev_3oxwzm) → 글자 찾기 없이 바로 인식하는 모델을 가로 띠 몇 개(화면 높이 7~17%, 겹치게)에 돌린다.
+    띠가 걸치는 줄은 일부만 읽히기도 해서 점수 비교(lc_score)에서 제목과 맞는 것만 쓰인다."""
+    import hud
     H, W = f.shape[:2]
     l, r = viewport(f)
-    c = f[int(0.07 * H):int(0.20 * H), int(l + 0.70 * (r - l)):int(l + 0.99 * (r - l))]
-    if c.size == 0:
-        return []
-    return read_lines(cv2.resize(c, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC), [model])[model]
+    x0, x1 = int(l + 0.70 * (r - l)), int(l + 0.935 * (r - l))      # 오른쪽 끝의 자물쇠 아이콘은 뺀다
+    out, seen = [], set()
+    for k, y in enumerate(np.arange(0.07, 0.17, 0.015)):
+        c = f[int(y * H):int((y + 0.06) * H), x0:x1]
+        if c.size == 0:
+            continue
+        sc = 48 / c.shape[0]
+        t = hud.rec_text(cv2.resize(c, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC))
+        if t and t not in seen:
+            seen.add(t)
+            out.append((int(y * H), x0, t))
+    return out
 
 
 def panel_crop(f):
@@ -655,8 +666,10 @@ def judge(rev):
                         fr['lc_scores'] = sc2
                         fr['panel_title'] = ' '.join(t for _, _, t in band if norm(t) not in guide_words()) or fr['panel_title']
             # 제목처럼 보이는 줄(숫자 · 「/」 없음, 길 이름 · 단추 글 아님)이 하나도 없으면 제목을 못 읽은 것
-            fr['title_found'] = any(not re.search(r'\d|/', t) and norm(t) not in PATH_WORDS and norm(t) not in guide_words()
-                                    for _, _, t in pl_t[:6]) or (fr['lc_scores'] and fr['lc_scores'][0][0] >= 0.7)
+            # 단추 글 · 길 이름을 뺀 첫 두 줄 가운데 숫자 · 「/」 없는 줄이 있어야 제목이 읽힌 것이다(제목 다음에 레벨 · 체력 줄이 오므로
+            # 첫 두 줄이 「等级80/80」 「846」이면 제목이 빠진 것: rev_3oxwzm). 점수가 이미 0.7 넘게 맞았으면 읽힌 것
+            first2 = [t for _, _, t in pl_t if norm(t) not in PATH_WORDS and norm(t) not in guide_words()][:2]
+            fr['title_found'] = any(not re.search(r'\d|/', t) for t in first2) or bool(fr['lc_scores'] and fr['lc_scores'][0][0] >= 0.7)
             fr['superimp'], fr['superimp_line'] = superimp_from(pl)
             if fr['superimp'] is None:
                 # 게임 글(광추 이름)과 UI 글(「วางซ้อน」)의 언어가 다른 영상이 있다(rev_1g39naf: 이름은 영어, UI 는 태국어)

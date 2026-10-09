@@ -136,6 +136,36 @@ def result_seen(rev, model):
     return None
 
 
+_LC_AL = None
+
+
+def seen_is_lc_name(text):
+    """화면에서 읽은 글에 실제 광추 이름(전 광추, 13개 언어 TextMap)이 들어 있는가. 불일치 판정은 이때만 한다.
+    정규화한 글에 이름이 그대로 들어 있으면 바로 참, 아니면 글자 구성이 비슷한(70% 이상) 이름만 골라 흐릿한 비교(0.75)."""
+    global _LC_AL
+    if _LC_AL is None:
+        import reasons
+        _LC_AL = []
+        for en in reasons._names('lc'):
+            for a in judge.aliases(en):
+                n = judge.norm(a)
+                if len(n) >= 2:
+                    _LC_AL.append((n, set(n), a, en))
+    n = judge.norm(text)
+    for g in judge.guide_words():
+        n = n.replace(g, '')
+    if not n:
+        return False
+    ns = set(n)
+    for an, aset, a, en in _LC_AL:
+        if len(an) >= 3 and an in n:
+            return True
+    for an, aset, a, en in _LC_AL:
+        if len(aset & ns) / len(aset) >= 0.7 and judge.title_sim(text, a) >= 0.75:
+            return True
+    return False
+
+
 def uncertain_eidolons(c):
     """잠김 · 열림이 애매한 성혼 단계를 「E3」 꼴로: 읽은 단계와 다음으로 맞는 단계 사이의 노드(노드 순서 = 성혼 단계)."""
     if c.get('e_alt') is None or c.get('e_seen') is None:
@@ -243,6 +273,10 @@ def run(rev, do_gp=True, reuse=False):
             if c['lc_match'] < 0.7 and not c.get('lc_title_found', True):
                 # 광추 제목이 한 줄도 안 읽혔다 → 안 맞는 게 아니라 못 읽은 것(사용자, 2026-10-09: rev_1sqwwaj)
                 ded('superimp_unread', f"{name}: Light Cone title unreadable")
+            elif c['lc_match'] < 0.7 and not seen_is_lc_name(c['lc_seen']):
+                # 화면에서 읽은 글이 어떤 광추 이름과도 안 맞는다(「角色攻略 記憶 等级80/80」 같은 단추 · 길 · 레벨 글) → 다른 광추를 낀 게 아니라 제목을 못 읽은 것
+                # (사용자, 2026-10-09: rev_3oxwzm — 「불일치」는 영상의 글이 실제 광추 이름일 때만)
+                ded('superimp_unread', f"{name}: Light Cone title unreadable (the text read, '{c['lc_seen']}', is not a Light Cone name)")
             elif c['lc_match'] < 0.7:
                 # 제출 쪽 표기(「Dance Dance Dance」) 대신 게임 영어 이름(「Dance! Dance! Dance!」)으로 적는다
                 shown = judge.en_key(sub['lc']) if sub['lc'] else 'Not Equipped'
