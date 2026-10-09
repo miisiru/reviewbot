@@ -214,6 +214,12 @@ def as_text(e):
     return '\n'.join(out + [e['footer']['text']])
 
 
+def video_key(url):
+    """영상 하나를 가리키는 키(유튜브 아이디 · 빌리빌리 BV). 타임스탬프 · 공유 꼬리표는 뺀다."""
+    m = re.search(r'youtu\.be/([\w-]{11})', url) or re.search(r'[?&]v=([\w-]{11})', url) or re.search(r'(BV\w{10})', url)
+    return m.group(1) if m else None
+
+
 def main():
     a = sys.argv[1:]
     opt = lambda k, d=None: a[a.index(k) + 1] if k in a else d
@@ -235,12 +241,29 @@ def main():
         d = os.path.join(RUNS, rev)
         pl = item.get('payload') or {}
         n_runs = len(pl.get('runs') or [1])
+        why_skip = None
         if item.get('kind') == 'multi' or n_runs > 1:
-            # 합친 제출(한 건에 런 여럿)은 검토하지 않고 곧바로 CHECK(사용자, 2026-10-09): 전투 결과 · 보유 효과를 런마다 보지 못한다
+            why_skip = f'combined submission ({n_runs} runs in one item): not reviewed by the tool'
+        else:
+            run0 = (pl.get('runs') or [pl])[0]
+            u0 = run0.get('video_url') or ''
+            tm = re.search(r'[?&#](?:t|start)=(\d+)', u0)
+            if tm and int(tm.group(1)) > 0:
+                # 타임스탬프가 있는 링크 = 영상 한쪽에 다른 기록이 함께 있다. 한 영상의 여러 기록을 가려 읽지 못한다(사용자, 2026-10-09)
+                why_skip = f'video link has a timestamp (t={tm.group(1)}): the video holds several runs, not reviewed by the tool'
+            else:
+                k0 = video_key(u0)
+                same = [x['id'] for x in q if x['id'] != rev and k0 and any(video_key(r2.get('video_url') or '') == k0
+                        for r2 in ((x.get('payload') or {}).get('runs') or [x.get('payload') or {}]))]
+                if same:
+                    why_skip = f'the same video is on other queue items ({", ".join(same[:3])}): several runs in one video, not reviewed by the tool'
+        if why_skip:
+            # 합친 제출(한 건에 런 여럿) · 타임스탬프 링크 · 한 영상에 기록 여럿은 검토하지 않고 곧바로 CHECK(사용자, 2026-10-09)
+            n_runs_txt = why_skip
             os.makedirs(d, exist_ok=True)
             json.dump(item, open(os.path.join(d, 'review.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
             json.dump({'verdict': 'CHECK', 'confidence': 0, 'problems': [], 'problem_items': [], 'checks': [], 'build': [],
-                       'check_reasons': [f'combined submission ({n_runs} runs in one item): not reviewed by the tool'], 'deductions': [],
+                       'check_reasons': [why_skip], 'deductions': [],
                        'uid': None, 'gp': None, 'timing': {}, 'stop_loop': False},
                       open(os.path.join(d, 'auto.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
             res = json.load(open(os.path.join(d, 'auto.json'), encoding='utf8'))
