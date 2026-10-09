@@ -68,6 +68,25 @@ def read_uid(rev, frames):
     return None
 
 
+def hud_model(rev, default):
+    """전투 HUD 오른쪽 위 라벨이 13개 언어 사전(CYCLES · RAV)과 가장 잘 맞는 OCR 모델. 영상 곳곳 6장."""
+    d = os.path.join(ROOT, rev)
+    vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
+    video = os.path.join(d, vids[0]['file'])
+    dur, W, H = tabs.probe(video)
+    fr = [f for _, f in tabs.frames(video, 0, dur, 6 / max(dur, 1), W, H)][:6]
+    scores = {}
+    for m in judge.MODELS:
+        tot = 0.0
+        for f in fr:
+            Hh, Ww = f.shape[:2]
+            c = f[0:int(0.6 * Hh), int(0.60 * Ww):Ww]
+            tot += max([max(hud.label_score(b[4], hud.CYCLES), hud.label_score(b[4], hud.RAV)) for b in ocr(c, m)] or [0])
+        scores[m] = tot
+    best = max(scores, key=scores.get)
+    return best if scores[best] > scores.get(default, 0) + 0.3 else default
+
+
 def start_seen(rev, vid, t0, model):
     """t0 뒤 62초 안에 전투 HUD(소모 라운드 · 남은 행동값 라벨)가 보이는 첫 시각."""
     d = os.path.join(ROOT, rev)
@@ -178,6 +197,10 @@ def run(rev, do_gp=True, reuse=False):
     b = judge.judge(rev)
     ocr_mod.set_gpu(False)
     model = b['ocr_model']
+    if not b['frames']:
+        # 광추 · 성혼 화면이 하나도 없으면 judge 가 언어를 못 골라 중국어로 남는다(rev_1pjotys: 한국어 영상, 메뉴 없음)
+        # → 전투 화면 오른쪽 위 HUD 라벨(소모 라운드 · 남은 행동값)을 모델마다 읽어 가장 잘 맞는 모델
+        model = hud_model(rev, model)
     lc_found = sum(1 for c in b['chars'] if c.get('lc_seen') is not None)
     # 메뉴 구간은 찾았는데(디테일 · 유물 · 성혼 등) 광추 탭이 한 번도 안 열렸으면 「못 읽음」이 아니라 「안 보여 줌」이다
     # (rev_s4it7k: 넷 다 광추 탭을 안 염 → 거절이 맞다). 메뉴를 못 찾았거나 광추 화면이 있는데 누구 것인지 못 정한 때만 애매
