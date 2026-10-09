@@ -161,7 +161,7 @@ def report(rev, a, item, action=None, reason=None):
             f"**Season:** {side.get('season') or p.get('season') or '—'}",
             f'**Status:** {status}']
     if reason:
-        desc.append(f'**Reason sent:** {reason}')
+        desc.append(f"**{'Reason sent' if action else 'Suggested reject reason (not sent)'}:** {reason}")
 
     fields = []
 

@@ -240,7 +240,10 @@ def run(rev, do_gp=True, reuse=False):
             if lc_found < len(b['chars']) - 1 and not lc_never_opened and not menu_never_shown:
                 ded('not_shown_uncertain', f'{name}: Light Cone page not found (other pages also missing)')
         else:
-            if c['lc_match'] < 0.7:
+            if c['lc_match'] < 0.7 and not c.get('lc_title_found', True):
+                # 광추 제목이 한 줄도 안 읽혔다 → 안 맞는 게 아니라 못 읽은 것(사용자, 2026-10-09: rev_1sqwwaj)
+                ded('superimp_unread', f"{name}: Light Cone title unreadable")
+            elif c['lc_match'] < 0.7:
                 # 제출 쪽 표기(「Dance Dance Dance」) 대신 게임 영어 이름(「Dance! Dance! Dance!」)으로 적는다
                 shown = judge.en_key(sub['lc']) if sub['lc'] else 'Not Equipped'
                 prob(f"{name} Light Cone mismatch (submitted '{shown}', video '{c['lc_seen']}')", 'lc_mismatch', char=name,
