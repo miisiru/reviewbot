@@ -232,11 +232,31 @@ def main():
         item = byid[rev]
         if '--claim' in a:
             sh([os.path.join(HERE, 'mod_api.py'), 'claim', rev])
+        d = os.path.join(RUNS, rev)
+        pl = item.get('payload') or {}
+        n_runs = len(pl.get('runs') or [1])
+        if item.get('kind') == 'multi' or n_runs > 1:
+            # 합친 제출(한 건에 런 여럿)은 검토하지 않고 곧바로 CHECK(사용자, 2026-10-09): 전투 결과 · 보유 효과를 런마다 보지 못한다
+            os.makedirs(d, exist_ok=True)
+            json.dump(item, open(os.path.join(d, 'review.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
+            json.dump({'verdict': 'CHECK', 'confidence': 0, 'problems': [], 'problem_items': [], 'checks': [], 'build': [],
+                       'check_reasons': [f'combined submission ({n_runs} runs in one item): not reviewed by the tool'], 'deductions': [],
+                       'uid': None, 'gp': None, 'timing': {}, 'stop_loop': False},
+                      open(os.path.join(d, 'auto.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
+            res = json.load(open(os.path.join(d, 'auto.json'), encoding='utf8'))
+            embed = report(rev, res, item)
+            print(as_text(embed), flush=True)
+            wh = opt('--webhook')
+            if wh:
+                try:
+                    post('question_webhook' if wh == 'question' else 'discord_webhook', {'embeds': [embed], 'allowed_mentions': {'parse': []}})
+                except Exception as e:
+                    print('webhook failed:', e)
+            continue
         one = os.path.join(WORK, f'q_{rev}.json')
         json.dump([item], open(one, 'w', encoding='utf8'), ensure_ascii=False)
         env = dict(ENV, HQ_QUEUE=one)
         print(sh([os.path.join(HERE, 'prep.py'), rev], env=env).stdout.strip())
-        d = os.path.join(RUNS, rev)
         tl_p = os.path.join(d, 'too_long.json')
         if os.path.exists(tl_p):
             # 20분 넘는 영상: 받지 않고 곧바로 사람 확인(사용자, 2026-10-09)
