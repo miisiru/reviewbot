@@ -277,7 +277,11 @@ def lock_states(f, lay, want_pred=False):
             if r.shape[0] > t.shape[0] and r.shape[1] > t.shape[1]:
                 sc = max(sc, float(cv2.matchTemplate(r, t, cv2.TM_CCOEFF_NORMED).max()))
         # 원이 안 잡힌 노드: 자물쇠가 또렷하면 잠김(밝은 유리 조각 위, rev_7ypr0m), 아니면 모름(자막 상자에 가림, rev_zrakw)
-        out.append(None if no_circle and sc < 0.75 else round(sc, 2))
+        # 가린 노드 판정: 흰 자막 상자가 덮었는지(노드 둘레 흰 픽셀이 많은지). 열린 노드는 원이 안 잡혀도 그냥 낮은 점수(≈0.4)로 센다 —
+        # 6성혼 캐릭터의 6번 노드가 그렇다(rev_amqq6g)
+        reg = g[int(max(0, py - 0.5 * sp)):int(min(H, py + 0.5 * sp)), int(max(0, px - 0.5 * sp)):int(min(W, px + 0.5 * sp))]
+        covered = reg.size > 0 and float((reg > 225).mean()) > 0.35
+        out.append(None if no_circle and sc < 0.75 and covered else round(sc, 2))
     return (out, pred) if want_pred else out
 
 
