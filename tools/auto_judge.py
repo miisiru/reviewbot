@@ -64,6 +64,38 @@ def start_seen(rev, vid, t0, model):
     return None
 
 
+_RESULT = None
+
+
+def result_seen(rev, model):
+    """메뉴가 하나도 없는 영상에서 전투 결과 화면(도전 성공 · 도전 종료 · 전투 종료, 13개 언어 TextMap)이 보이는 시각.
+    영상이 끝까지 디코드되고(summary.json decoded) 메뉴 구간이 0 일 때만 부른다. 끝 2분을 1초마다, 고른 모델로 못 찾으면 다른 모델로."""
+    global _RESULT
+    if _RESULT is None:
+        _RESULT = {judge.norm(v) for en in ('Challenge Completed', 'Challenge Ended', 'Battle Over')
+                   for l in judge.LANGS for v in (judge.localize(en, l) or []) if judge.norm(v)}
+    d = os.path.join(ROOT, rev)
+    vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
+    for vi, v in enumerate(vids):
+        sj = os.path.join(d, f'tabs{vi}', 'summary.json')
+        if not os.path.exists(sj):
+            return None
+        s = json.load(open(sj))
+        if s.get('windows') or s.get('decode_error') or (s.get('decoded') or 0) < 0.99:
+            return None
+    for vi, v in enumerate(vids):
+        video = os.path.join(d, v['file'])
+        dur, W, H = tabs.probe(video)
+        for m in [model] + [x for x in judge.MODELS if x != model]:
+            for t, f in tabs.frames(video, max(0, dur - 120), min(120, dur), 1, W, H):
+                c = f[int(0.05 * H):int(0.5 * H), int(0.2 * W):int(0.8 * W)]
+                for b in ocr(c, m):
+                    n = judge.norm(b[4])
+                    if n and any(w in n or judge.sim(n, w) >= 0.8 for w in _RESULT):
+                        return round(t, 1)
+    return None
+
+
 def uncertain_eidolons(c):
     """잠김 · 열림이 애매한 성혼 단계를 「E3」 꼴로: 읽은 단계와 다음으로 맞는 단계 사이의 노드(노드 순서 = 성혼 단계)."""
     if c.get('e_alt') is None or c.get('e_seen') is None:
@@ -134,6 +166,14 @@ def run(rev, do_gp=True, reuse=False):
         if os.path.exists(os.path.join(ROOT, rev, f'tabs{vi}', 'timeline.txt')):
             segs += judge.segs_of(rev, vi)
     lc_never_opened = bool(segs) and not any(k == 'LightCone' for _, _, k in segs)
+    # 메뉴 구간이 하나도 없고 영상이 끝까지 재생되며 결과 화면(도전 성공 · 전투 종료)이 보이면 빌드를 안 보여 준 것이다
+    # (사용자, 2026-10-09: rev_6quic9 — 전투 뒤 결과 화면으로 끝나고 캐릭터 화면이 없다 → 거절)
+    menu_never_shown = False
+    if not segs and not any(w.startswith('video file') for _, w in out['deductions']):
+        rt = result_seen(rev, model)
+        if rt is not None:
+            menu_never_shown = True
+            out['checks'].append(f'no character menu anywhere in the video; result screen at {rt} (build not shown)')
     for c in b['chars']:
         name = c['char']
         sub = c['submitted']
@@ -153,7 +193,7 @@ def run(rev, do_gp=True, reuse=False):
                 ded('id_inferred', f'{name}: identified by {how}')
         if c.get('lc_seen') is None:
             prob(f'{name} Light Cone Superimposition not shown', 'lc_not_shown', char=name)
-            if lc_found < len(b['chars']) - 1 and not lc_never_opened:
+            if lc_found < len(b['chars']) - 1 and not lc_never_opened and not menu_never_shown:
                 ded('not_shown_uncertain', f'{name}: Light Cone page not found (other pages also missing)')
         else:
             if c['lc_match'] < 0.7:
@@ -191,7 +231,7 @@ def run(rev, do_gp=True, reuse=False):
     # 2) UID
     uid = read_uid(rev, b['frames'])
     out['uid'] = uid
-    if not uid:
+    if not uid and not menu_never_shown:     # UID 는 캐릭터 화면에 나온다 — 화면이 아예 없으면 못 읽은 게 아니다
         ded('uid_missing', 'UID not readable')
     tm('uid')
     # 3) 전투 HUD

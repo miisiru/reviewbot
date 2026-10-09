@@ -179,7 +179,12 @@ def fit_nodes(cs, sp):
                             err += dd
                     if hit > best[0] or (hit == best[0] and err < best[1]):
                         best = (hit, err, pred)
-    return best[2] if best[0] >= 5 else None
+    if best[0] >= 5:
+        return best[2]
+    # 넷만 맞아도 자리가 꼭 맞으면 받는다: 밝은 유리 조각 위 노드는 원이 안 잡힌다(rev_7ypr0m 388.93초 5 · 6번)
+    if best[0] == 4 and best[1] / 4 < 0.12 * sp:
+        return best[2]
+    return None
 
 
 def hp(g):
@@ -246,16 +251,15 @@ def lock_states(f, lay, want_pred=False):
     t0 = glyph_tpl()
     out = []
     for px, py in pred:
-        if min((np.hypot(px - cx, py - cy) for cx, cy in cs), default=1e9) >= 0.4 * sp:
-            out.append(None)
-            continue
+        no_circle = min((np.hypot(px - cx, py - cy) for cx, cy in cs), default=1e9) >= 0.4 * sp
         r = hp(g[int(max(0, py - 0.5 * sp)):int(min(H, py + 0.5 * sp)), int(max(0, px - 0.5 * sp)):int(min(W, px + 0.5 * sp))])
         sc = -1.0
         for m in (0.85, 1.0, 1.15):
             t = cv2.resize(t0, None, fx=sp / 62.8 * m, fy=sp / 62.8 * m, interpolation=cv2.INTER_AREA)
             if r.shape[0] > t.shape[0] and r.shape[1] > t.shape[1]:
                 sc = max(sc, float(cv2.matchTemplate(r, t, cv2.TM_CCOEFF_NORMED).max()))
-        out.append(round(sc, 2))
+        # 원이 안 잡힌 노드: 자물쇠가 또렷하면 잠김(밝은 유리 조각 위, rev_7ypr0m), 아니면 모름(자막 상자에 가림, rev_zrakw)
+        out.append(None if no_circle and sc < 0.75 else round(sc, 2))
     return (out, pred) if want_pred else out
 
 
