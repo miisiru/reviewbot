@@ -7,7 +7,7 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --claim    판정 전에 「검토 중」 표시(mod_api.py claim)
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
 결과: runs/<rev>/auto.json · auto_log.txt, 요약은 work/results.jsonl 에 한 줄씩"""
-import os, sys, json, subprocess, time
+import os, sys, re, json, subprocess, time
 from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -231,6 +231,19 @@ def main():
             mins = ', '.join(f"{x['seconds'] / 60:.0f} min" for x in json.load(open(tl_p, encoding='utf8')))
             json.dump({'verdict': 'CHECK', 'confidence': 0, 'problems': [], 'problem_items': [], 'checks': [], 'build': [],
                        'check_reasons': [f'video longer than 20 minutes ({mins}), not downloaded'], 'deductions': [],
+                       'uid': None, 'gp': None, 'timing': {}, 'stop_loop': False},
+                      open(os.path.join(d, 'auto.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
+        elif any(not os.path.exists(os.path.join(d, v['file'])) or os.path.getsize(os.path.join(d, v['file'])) == 0
+                 for v in json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))):
+            # 영상을 못 받았다(비공개 · 삭제 · 지역 제한 등): 판정하지 않고 사람 확인으로(rev_1e5ddxv)
+            why = ''
+            for i in range(len(json.load(open(os.path.join(d, 'videos.json'), encoding='utf8')))):
+                ip = os.path.join(d, f'video{i}.info')
+                if os.path.exists(ip):
+                    m = re.findall(r'ERROR: (.*)', open(ip, encoding='utf8', errors='replace').read())
+                    why = (m[-1] if m else '')[:160]
+            json.dump({'verdict': 'CHECK', 'confidence': 0, 'problems': [], 'problem_items': [], 'checks': [], 'build': [],
+                       'check_reasons': ['video could not be downloaded' + (f' ({why})' if why else '')], 'deductions': [],
                        'uid': None, 'gp': None, 'timing': {}, 'stop_loop': False},
                       open(os.path.join(d, 'auto.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1)
         else:
