@@ -44,6 +44,27 @@ def read_uid(rev, frames):
         m = re.search(r'(\d{9,10})', txt)
         if m:
             return m.group(1)
+    # 캐릭터 화면에서 못 읽으면 전투 화면 왼쪽 아래 작은 「UID:…」에서(전투 중에도 나온다, rev_6quic9).
+    # 글자가 작아 두 배로 키워 읽고, 영상 곳곳 12장에서 가장 많이 나온 값
+    vids_p = os.path.join(ROOT, rev, 'videos.json')
+    if not os.path.exists(vids_p):
+        return None
+    votes = {}
+    for v in json.load(open(vids_p, encoding='utf8')):
+        video = os.path.join(ROOT, rev, v['file'])
+        if not os.path.exists(video):
+            continue
+        dur, W, H = tabs.probe(video)
+        for t, f in tabs.frames(video, 0, dur, 12 / max(dur, 1), W, H):
+            c = cv2.resize(f[int(0.9 * H):H, 0:int(0.3 * W)], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            txt = ''.join(b[4] for b in ocr(c, 'chinese')).replace(' ', '')
+            m = re.search(r'UID\D{0,2}(\d{9,10})', txt, re.I) or re.search(r'(\d{9,10})', txt)
+            if m:
+                votes[m.group(1)] = votes.get(m.group(1), 0) + 1
+    if votes:
+        best = max(votes, key=votes.get)
+        if votes[best] >= 2:
+            return best
     return None
 
 
