@@ -172,13 +172,25 @@ def report(rev, a, item, action=None, reason=None):
 
     add('⚠️ Needs human check', bullets(a.get('check_reasons') or [], url))
     add('❌ Problems', bullets(a['problems'], url))
-    team = side_name(side) + (f' (+{len(sides) - 1} more)' if len(sides) > 1 else '')
-    add(team, [build_row(b, url) for b in a.get('build') or []] or ['—'])
+    # 합친 제출(여러 런)은 런마다 칸을 따로 만든다: 한 칸은 1024자까지라 캐릭터 열둘이 한 칸이면 잘린다.
+    # 빌드 목록은 런마다 캐릭터 순서(p1~p4)대로 이어져 있다
+    builds = list(a.get('build') or [])
+    pos = 0
+    for si, sd in enumerate(sides):
+        n = sum(1 for j in range(1, 5) if sd.get(f'p{j}_char'))
+        rows = [build_row(b, sd.get('video_url') or url) for b in builds[pos:pos + n]]
+        pos += n
+        title = side_name(sd) + (f' ({si + 1}/{len(sides)})' if len(sides) > 1 else '')
+        vurl = sd.get('video_url') or ''
+        if len(sides) > 1 and vurl:
+            title += f'  ·  starts {mmss(int(float(re.search(r"[?&]t=(\d+)", vurl).group(1))) if re.search(r"[?&]t=(\d+)", vurl) else 0)}'
+        add(title, rows or ['—'])
+    only1 = ' — run 1 only' if len(sides) > 1 else ''
     # 짧은 값만 나란히(긴 글을 칸에 넣으면 좁은 칸에서 줄이 마구 꺾인다)
     if a.get('gp') is not None:
-        add('Global Passive', gp_lines(a['gp'], url), inline=True)
+        add('Global Passive' + only1, gp_lines(a['gp'], url), inline=True)
     add('UID', f"`{a['uid']}`" if a.get('uid') else f'{ROW_MARK[UNSURE]} **not readable**', inline=True)
-    add('Battle (HUD)', bullets(a['checks'], url), inline=all(len(x) <= 40 for x in a['checks']))
+    add('Battle (HUD)' + only1, bullets(a['checks'], url), inline=all(len(x) <= 40 for x in a['checks']))
     ded = a.get('deductions', [])
     add(f"Deductions (−{sum(n for n, _ in ded)})", [link_inline_timestamps(f'−{n} {w}', url) for n, w in ded])
     links = [f'[Video]({url})'] if url else []
