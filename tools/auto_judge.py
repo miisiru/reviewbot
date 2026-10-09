@@ -197,8 +197,8 @@ def run(rev, do_gp=True, reuse=False):
     b = judge.judge(rev)
     ocr_mod.set_gpu(False)
     model = b['ocr_model']
-    if not b['frames']:
-        # 광추 · 성혼 화면이 하나도 없으면 judge 가 언어를 못 골라 중국어로 남는다(rev_1pjotys: 한국어 영상, 메뉴 없음)
+    if not any(f['tab'] == 'LightCone' for f in b['frames']):
+        # 광추 화면이 하나도 없으면(성혼 머리글만으로 고른 언어는 틀리기 쉽다: rev_zmad8t 중국어 영상이 latin 으로) 또는 광추 · 성혼 화면이 하나도 없으면 judge 가 언어를 못 골라 중국어로 남는다(rev_1pjotys: 한국어 영상, 메뉴 없음)
         # → 전투 화면 오른쪽 위 HUD 라벨(소모 라운드 · 남은 행동값)을 모델마다 읽어 가장 잘 맞는 모델
         model = hud_model(rev, model)
     lc_found = sum(1 for c in b['chars'] if c.get('lc_seen') is not None)
@@ -287,6 +287,15 @@ def run(rev, do_gp=True, reuse=False):
         cache['hud'] = {} if cyc_mode else hud.scan(rev, run_vid, model=model, plight=plight)['final']
     fin = cache['hud']
     out['hud'] = fin
+    # 모드 불일치(사용자, 2026-10-09): 전투 HUD 오른쪽 위가 이상 중재면 「소모 라운드」, 종말의 환영이면 「남은 행동값」.
+    # 한쪽 라벨만 또렷하게 여러 번 읽혔는데 제출 모드와 반대면 모드가 다르다(rev_zmad8t: AA 로 냈는데 AS 영상)
+    if not cyc_mode and not plight:
+        got_rav = (fin.get('rav') or {}).get('of', 0) >= 3
+        got_cyc = (fin.get('cycles') or {}).get('frames', 0) >= 3
+        if mode == 'aa' and got_rav and not got_cyc:
+            prob('Mode mismatch (submitted Anomaly Arbitration, video is Apocalyptic Shadow)', 'mode_mismatch', sub='aa', video='as')
+        elif mode == 'as' and got_cyc and not got_rav:
+            prob('Mode mismatch (submitted Apocalyptic Shadow, video is Anomaly Arbitration)', 'mode_mismatch', sub='as', video='aa')
 
     def hv(key):
         x = fin.get(key)
@@ -302,7 +311,8 @@ def run(rev, do_gp=True, reuse=False):
     if mode == 'as':
         rav = hv('rav')
         if rav is None:
-            ded('hud_unread', 'Remaining Action Value at Battle Over not read')
+            if not any(i.get('kind') == 'mode_mismatch' for i in out['problem_items']):
+                ded('hud_unread', 'Remaining Action Value at Battle Over not read')
         else:
             score = 2000 + rav
             out['checks'].append(f'Score (HUD): Remaining Action Value {rav} at Battle Over, boss killed -> 2000 + {rav} = {score}')
@@ -343,7 +353,7 @@ def run(rev, do_gp=True, reuse=False):
                 if s0.get('action_value') and int(s0['action_value']) != used:
                     prob(f"Action Value mismatch (submitted {s0['action_value']}, video {used})", 'av_mismatch', sub=s0['action_value'], video=used)
         if cyc is None:
-            if not plight and pf_ambiguous != 'checked':
+            if not plight and pf_ambiguous != 'checked' and not any(k == 'mode_mismatch' for k in [i.get('kind') for i in out['problem_items']]):
                 ded('hud_unread', 'Cycles Used at Battle Over not read' if not cyc_mode else 'action-order hourglass counter not read')
         else:
             if not cyc_mode:

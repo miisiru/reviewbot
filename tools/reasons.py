@@ -106,6 +106,15 @@ CAT = {'CN': {'0-Cycle': '0T', 'full stars': '满星', 'Clear': '通关', '0 AV'
 SEP = {'KR': ', ', 'EN': ', ', 'CN': '、', 'JP': '、'}
 
 
+MODE_EN = {'aa': 'Anomaly Arbitration', 'as': 'Apocalyptic Shadow', 'moc': 'Memory of Chaos', 'pf': 'Pure Fiction'}
+
+
+def mode_name(mode, lang):
+    en = MODE_EN.get(mode, mode)
+    vs = [x for x in names.localize(en, TM_LANG[lang]) if x] if lang != 'EN' else []
+    return (vs[-1] if vs else en).strip('「」')
+
+
 def render(items, lang):
     lang = lang if lang in TM_LANG else 'EN'
     C = lambda en: char_name(en, lang)
@@ -171,6 +180,11 @@ def render(items, lang):
             a, b = it['sub'], it['video']
             out.append({'KR': f'소모 라운드 불일치 (제출 {a}라운드, 영상 {b}라운드)', 'EN': f'Consumed Cycles mismatch (submitted {a} Cycles, video {b} Cycles)',
                         'CN': f'消耗轮次与提交不符（提交为{a}轮，视频中为{b}轮）', 'JP': f'消費ラウンドが申請と不一致（申請{a}ラウンド、動画{b}ラウンド）'}[lang])
+        elif k == 'mode_mismatch':
+            # 모드 이름은 TextMap 공식 낱말(「이상 중재」 · 「종말의 환영」…)
+            a, b = mode_name(it['sub'], lang), mode_name(it['video'], lang)
+            out.append({'KR': f'모드 불일치 (제출 {a}, 영상은 {b})', 'EN': f'Mode mismatch (submitted {a}, video is {b})',
+                        'CN': f'模式与提交不符（提交为{a}，视频中为{b}）', 'JP': f'モードが申請と不一致（申請{a}、動画は{b}）'}[lang])
         elif k == 'category_mismatch':
             m = CAT.get(lang, {})
             a, b = m.get(it['sub'], it['sub']), m.get(it['should'], it['should'])

@@ -123,9 +123,27 @@ def header_crop(f, lay):
     return f[int(max(0, y0 - 1.05 * sp)):int(max(1, y0 - 0.5 * sp)), int(max(0, x - 1.6 * sp)):int(min(W, x + 4.2 * sp))]
 
 
+def viewport(f):
+    """게임 화면이 영상 일부일 때(편집자가 흰 테두리를 두르고 옆에 스티커 · 글을 붙인 영상, rev_xmptw5) 그 가로 범위.
+    위아래를 뺀 거의 모든 줄이 흰 세로 띠가 왼쪽 · 오른쪽에 둘 있으면 그 사이. 없으면 화면 전체."""
+    H, W = f.shape[:2]
+    col = (cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)[int(0.04 * H):int(0.96 * H)] > 200).mean(axis=0)
+    xs = [x for x in range(W) if col[x] > 0.7]       # 자막 상자가 띠 일부를 가려도(rev_xmptw5)
+    if not xs:
+        return 0, W
+    lo = [x for x in xs if x < 0.15 * W]
+    hi = [x for x in xs if x > 0.5 * W]
+    if not lo and not hi:
+        return 0, W
+    left = max(lo) if lo and max(lo) - min(lo) < 0.03 * W else 0
+    right = min(hi) if hi and max(hi) - min(hi) < 0.03 * W else W
+    return (left, right) if right - left > 0.5 * W else (0, W)
+
+
 def panel_crop(f):
     H, W = f.shape[:2]
-    return f[int(0.04 * H):int(0.80 * H), int(0.70 * W):int(0.99 * W)]
+    l, r = viewport(f)
+    return f[int(0.04 * H):int(0.80 * H), int(l + 0.70 * (r - l)):int(l + 0.99 * (r - l))]
 
 
 # ---------- 성혼: 노드 6개 찾고 자물쇠 판정 ----------
