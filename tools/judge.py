@@ -338,7 +338,11 @@ def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
         # 애매하거나 프레임이 적으면 둘레를 더 본다(사용자, 2026-10-09): 앞뒤 2초, 머리글 조건 없이 —
         # 머리글은 화면이 열리는 연출 동안 「다름」으로 읽혀 또렷한 프레임을 버리는 일이 있다(rev_ss0gr5 361.1~361.23초).
         # 다른 캐릭터 화면은 노드 옆 성혼 이름 그림으로 나눠 뺀다
-        fr2 = list(tabs.frames(video, max(0, t_ref - 2.0), 4.0, 30, W, H))
+        # 앞뒤 캐릭터 화면이 섞이지 않게 이웃 프레임(since · until)은 넘지 않는다. 화면이 열리는 동안은 성혼 이름이 흐려
+        # 캐릭터가 바뀐 자리를 못 찾아, 넘으면 다음 캐릭터의 노드가 섞인다(rev_a19n6r: 아케론 E2 가 다음 캐릭터와 섞여 E0)
+        a2 = max(0.0, t_ref - 2.0) if since is None else max(t_ref - 2.0, since + 0.05)
+        b2 = t_ref + 2.0 if until is None else min(t_ref + 2.0, until - 0.05)
+        fr2 = list(tabs.frames(video, max(0, a2), max(0.15, b2 - a2), 30, W, H))
         mx2, n2 = _eidolon_pass(fr2, lay, t_ref, None)
         fit2 = eidolon_fit(mx2) if mx2 else None
         if mx2 is not None and (mx is None or fit2[2] > fit[2] or (fit2[2] >= fit[2] and n2 > n)):
@@ -855,7 +859,17 @@ def judge(rev):
             r['lc_t'] = f0['t']
             r['lc_how'] = f0['how']
         if eif:
-            f0 = max(eif, key=lambda f: f.get('lock_frames') or 0)
+            # 같은 캐릭터로 정해진 성혼 화면이 여럿이면 누구인지 정한 근거가 센 것을 먼저, 같으면 프레임이 많은 것
+            # (rev_a19n6r: 「Archer」가 「Acheron」과 0.77 로 붙어 그 뒤 「after LC」 프레임들이 아케론으로 정해졌고, 프레임이 더 많아
+            # 진짜 아케론 화면 대신 골라져 E2 가 E0 으로 읽혔다 — 틀린 거절이 될 뻔했다)
+            def id_strength(f):
+                h = f.get('how') or ''
+                if ' + ' in h or h.startswith('name 1') or h.startswith('name 0.9') or re.match(r'eidolon names [3-6]/', h):
+                    return 2
+                if h.startswith('name') or h.startswith('eidolon names') or h.startswith('lc title') or h.startswith('details'):
+                    return 1
+                return 0          # after LC · same header · only one left 따위 추정
+            f0 = max(eif, key=lambda f: (id_strength(f), f.get('lock_frames') or 0))
             act = 1 if f0['activatable'] else 0
             sc = f0.get('lock_scores')
             fit = eidolon_fit(sc) if sc and len(sc) == 6 else None
