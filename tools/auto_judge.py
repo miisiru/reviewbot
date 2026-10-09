@@ -285,6 +285,11 @@ def run(rev, do_gp=True, reuse=False):
     cyc_mode = mode in ('moc', 'pf')      # 혼돈의 기억 · 허구 이야기: 오른쪽 위 「소모 라운드」가 없고 행동 순서의 모래시계 칸으로 센다
     if 'hud' not in cache:
         cache['hud'] = {} if cyc_mode else hud.scan(rev, run_vid, model=model, plight=plight)['final']
+        if not cyc_mode and not plight and not cache['hud'].get('rav') and not (cache['hud'].get('cycles') or {}).get('frames'):
+            # 광추 이름은 영어인데 UI 는 태국어인 영상 등: 고른 모델로 HUD 라벨이 안 읽히면 HUD 글로 모델을 다시 골라 한 번 더(rev_jwrt4a)
+            m2 = hud_model(rev, model)
+            if m2 != model:
+                cache['hud'] = hud.scan(rev, run_vid, model=m2, plight=plight)['final']
     fin = cache['hud']
     out['hud'] = fin
     # 모드 불일치(사용자, 2026-10-09): 전투 HUD 오른쪽 위가 이상 중재면 「소모 라운드」, 종말의 환영이면 「남은 행동값」.

@@ -425,7 +425,8 @@ def superimp_from(lines):
                 continue
             joined = t + nxt[0]
         # 레벨 줄(「Lv.80/80」)은 빼되 태국어 · 영어 중첩 줄 「วางซ้อน Lv.1」 「Superimposition Lv.1」 은 남긴다(rev_1g39naf)
-        if re.search(r'[%+/]|\d{2}', joined.lower()) or ':' in joined.rstrip(' :：'):
+        # 「Lv.:1」 「Lv:1」 처럼 점 대신 쌍점으로 읽힌 중첩 줄(태국어 OCR, rev_jwrt4a)은 남긴다
+        if re.search(r'[%+/]|\d{2}', joined.lower()) or (':' in joined.rstrip(' :：') and not re.search(r'lv[.:：\s]*\d\s*$', joined.lower())):
             continue
         word = norm(re.sub(r'[0-9]', '', joined))
         if not word or len(word) > 24:
