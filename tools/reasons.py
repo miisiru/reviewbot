@@ -80,8 +80,11 @@ def lc_from_screen(text, lang):
 
 def detect_lang(rev):
     """영상 화면 글(광추 패널 · 머리글 · 디테일)의 글자 종류로 게임 언어를 정한다. 가나 → JP, 한글 → KR, 한자 → CN, 그 밖 → EN."""
-    j = json.load(open(os.path.join(RUNS, rev, 'judge.json'), encoding='utf8'))
-    txt = ' '.join([f.get('panel_title') or '' for f in j['frames']] + [f.get('header') or '' for f in j['frames']]
+    p = os.path.join(RUNS, rev, 'judge.json')
+    if not os.path.exists(p):
+        return 'EN'          # 빌드를 안 읽은 건(20분 넘는 영상 등)
+    j = json.load(open(p, encoding='utf8'))
+    txt =' '.join([f.get('panel_title') or '' for f in j['frames']] + [f.get('header') or '' for f in j['frames']]
                    + [d.get('text') or '' for d in j.get('details', [])])
     kana = len(re.findall(r'[぀-ヿ]', txt))
     hangul = len(re.findall(r'[가-힣]', txt))
