@@ -1,0 +1,261 @@
+"""화면 그림으로 광추 · 캐릭터를 알아보는 도구(글 읽기에 기대지 않는다: 워터마크 · 자막 · 언어 · 흔들림에 강하다).
+
+광추 카드: 게임 자료의 광추 그림(LightConeMaxFigures, 카드 안 그림)과 화면의 카드를 SIFT 특징점으로 맞추고 호모그래피(RANSAC)로 걸러
+  맞은 점 수(인라이어)를 센다. 진짜 광추는 150~230, 다른 광추는 10 안쪽이라 차이가 압도적이다(rev_3oxwzm 네 장 시험).
+  카드는 기울어져 보이고(원근) 자막 · 워터마크가 가려도 점 몇 개가 가릴 뿐이다.
+
+그림 자료: data/img/<종류>/<아이디>.webp (me-miisi 의 public/img 에서 복사, 원본은 HF 데이터셋 fffffffff1/imageassets · assets 의 spriteoutput)
+  lightconemaxfigures  광추 카드 그림(세로 720)
+  avatarroundicon      캐릭터 둥근 얼굴 아이콘
+python imgrec.py <프레임.jpg> [...]   광추 화면 프레임이면 광추 순위를 찍는다"""
+import os, sys, glob, json
+import cv2
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+IMG = os.path.join(HERE, '..', 'data', 'img')
+_sift = None
+_lc = None
+
+
+def sift():
+    global _sift
+    if _sift is None:
+        _sift = cv2.SIFT_create(nfeatures=1500)
+    return _sift
+
+
+def lc_library():
+    """{광추 아이디: (특징점, 설명자)}"""
+    global _lc
+    if _lc is None:
+        _lc = {}
+        for p in glob.glob(os.path.join(IMG, 'lightconemaxfigures', '2*.webp')):
+            i = int(os.path.basename(p).split('.')[0])
+            im = cv2.imread(p)
+            if im is None:
+                continue
+            s = 360 / im.shape[0]
+            im = cv2.resize(im, None, fx=s, fy=s)
+            kp, d = sift().detectAndCompute(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY), None)
+            if d is not None:
+                _lc[i] = (kp, d)
+    return _lc
+
+
+def _viewport(f):
+    import judge
+    return judge.viewport(f)
+
+
+def card_region(f):
+    """광추 화면에서 카드가 있는 곳(게임 화면 가운데). 메뉴 · 패널과 겹쳐도 점 몇 개일 뿐이다."""
+    H, W = f.shape[:2]
+    l, r = _viewport(f)
+    w = r - l
+    return f[int(0.12 * H):int(0.88 * H), int(l + 0.25 * w):int(l + 0.72 * w)]
+
+
+def _inliers(fk, fd, i, bf):
+    kp, d = lib[i]
+    m = bf.knnMatch(d, fd, k=2)
+    good = [a for a, b in (x for x in m if len(x) == 2) if a.distance < 0.75 * b.distance]
+    if len(good) < 6:
+        return len(good) // 2
+    src = np.float32([kp[g.queryIdx].pt for g in good])
+    dst = np.float32([fk[g.trainIdx].pt for g in good])
+    _, mask = cv2.findHomography(src, dst, cv2.RANSAC, 6.0)
+    return int(mask.sum()) if mask is not None else 0
+
+
+def identify_lc(frame, only=None):
+    """광추 화면 프레임 → [(맞은 점 수, 광추 아이디)] 많은 순. only 가 있으면 그 아이디들만."""
+    global lib
+    lib = lc_library()
+    c = card_region(frame)
+    if c.shape[0] < 540:                     # 작은 영상은 키워 점을 더 얻는다(라이브러리는 높이 360 기준)
+        s = 540 / c.shape[0]
+        c = cv2.resize(c, None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC)
+    fk, fd = sift().detectAndCompute(cv2.cvtColor(c, cv2.COLOR_BGR2GRAY), None)
+    if fd is None or len(fd) < 8:
+        return []
+    bf = cv2.BFMatcher()
+    ids = [i for i in lib if only is None or i in only]
+    return sorted(((_inliers(fk, fd, i, bf), i) for i in ids), reverse=True)
+
+
+
+
+_ids = None
+
+
+def lc_ids():
+    """({영어 이름: 광추 아이디}, {광추 아이디: 영어 이름}) — ExcelOutput 의 EquipmentConfig + TextMap"""
+    global _ids
+    if _ids is None:
+        import reasons, names
+        en = names._load('EN')
+        a, b = {}, {}
+        for r in reasons._excel('EquipmentConfig.json'):
+            e = names.clean(en.get(str((r.get('EquipmentName') or {}).get('Hash')), ''))
+            if e:
+                a.setdefault(e, r['EquipmentID'])
+                b[r['EquipmentID']] = e
+        _ids = (a, b)
+    return _ids
+
+
+CONFIDENT_MIN = 25          # 이 점 수 이상이면서
+CONFIDENT_RATIO = 2.5       # 둘째의 이 배 이상이면 그림으로 광추를 확정한다(평가: 맞은 656장은 모두 1등)
+
+
+def confident_lc(ranked):
+    """identify_lc 결과에서 그림으로 확정할 수 있으면 (아이디, 점 수, 둘째 점 수), 아니면 None"""
+    if not ranked:
+        return None
+    top = ranked[0]
+    second = ranked[1][0] if len(ranked) > 1 else 0
+    if top[0] >= CONFIDENT_MIN and top[0] >= CONFIDENT_RATIO * max(second, 4):
+        return top[1], top[0], second
+    return None
+
+
+# ---------- 캐릭터 얼굴(위쪽 줄 · 왼쪽 세로 줄) ----------
+_av = None
+D0 = 44                      # 720p 에서 보통 얼굴 지름(고른 얼굴은 더 크다)
+
+
+def avatar_library():
+    """{캐릭터 아이디: 둥근 얼굴 그림(정사각)}"""
+    global _av
+    if _av is None:
+        _av = {}
+        paths = glob.glob(os.path.join(IMG, 'avatarroundicon', '*.webp')) + glob.glob(os.path.join(HERE, '..', 'data', 'avatarroundicon', '*.webp'))
+        for p in paths:
+            n = os.path.basename(p).split('.')[0]
+            if not n.isdigit() or int(n) in _av:
+                continue
+            im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+            if im is None:
+                continue
+            if im.shape[2] == 4:
+                im = (im[..., :3] * (im[..., 3:4] / 255.0)).astype(np.uint8)
+            h, w = im.shape[:2]
+            s = min(h, w)
+            _av[int(n)] = im[(h - s) // 2:(h + s) // 2, (w - s) // 2:(w + s) // 2]
+    return _av
+
+
+def _mask(d):
+    yy, xx = np.mgrid[0:d, 0:d]
+    return (((yy - d / 2) ** 2 + (xx - d / 2) ** 2) <= (0.40 * d) ** 2).astype(np.uint8)
+
+
+def _tm(strip, im, d, gray, half):
+    t = cv2.resize(im, (d, d), interpolation=cv2.INTER_AREA)
+    m = _mask(d)
+    if gray:
+        t = cv2.cvtColor(t, cv2.COLOR_BGR2GRAY)
+    else:
+        m = cv2.merge([m] * 3)
+    if strip.shape[0] < d or strip.shape[1] < d:
+        return 0.0, (0, 0)
+    r = cv2.matchTemplate(strip, t, cv2.TM_CCOEFF_NORMED, mask=m)
+    r = np.where((r >= -1.0) & (r <= 1.0), np.nan_to_num(r), 0).astype(np.float32)
+    _, mx, _, loc = cv2.minMaxLoc(r)
+    return float(mx), loc
+
+
+def faces(f, region, scale0=1.0):
+    """region(x0, y0, x1, y1) 안에서 보이는 둥근 얼굴들을 찾는다. → [{id, score, x, y, d}] (고른 얼굴은 d 가 더 크다)
+    1) 반 해상도 회색으로 모든 얼굴 아이콘을 보통 크기에서 맞춰 자리를 찾고(자리마다 가장 맞는 아이콘)
+    2) 찾은 자리마다 컬러로 여러 크기를 시험해 가장 맞는 크기를 낸다."""
+    x0, y0, x1, y1 = region
+    H = f.shape[0]
+    k = H / 720.0
+    d0 = max(16, int(round(D0 * k)))
+    strip = f[y0:y1, x0:x1]
+    small = cv2.cvtColor(cv2.resize(strip, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    lib = avatar_library()
+    d_half = max(8, d0 // 2)
+    cand = []
+    # 자리를 찾는 것은 아이콘 하나하나의 최고점이 아니라 「자리마다 가장 맞는 아이콘」: 아이콘별 결과 지도를 모아 자리별로 고른다
+    best_map = None
+    for i, im in lib.items():
+        t = cv2.cvtColor(cv2.resize(im, (d_half, d_half), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+        if small.shape[0] < d_half or small.shape[1] < d_half:
+            continue
+        r = cv2.matchTemplate(small, t, cv2.TM_CCOEFF_NORMED, mask=_mask(d_half))
+        r = np.where((r >= -1.0) & (r <= 1.0), np.nan_to_num(r), 0).astype(np.float32)     # 평평한 곳에서 터지는 값(수백억)을 버린다
+        if best_map is None:
+            best_map = r.copy()
+            best_id = np.full(r.shape, i, np.int32)
+        else:
+            up = r > best_map
+            best_map[up] = r[up]
+            best_id[up] = i
+    if best_map is None:
+        return []
+    out = []
+    bm = best_map.copy()
+    for _ in range(14):
+        _, mx, _, loc = cv2.minMaxLoc(bm)
+        if mx < 0.55:
+            break
+        cx, cy = loc
+        out.append((mx, int(best_id[cy, cx]), cx * 2 + x0, cy * 2 + y0))
+        bm[max(0, cy - d_half // 2 - 2):cy + d_half // 2 + 3, max(0, cx - d_half // 2 - 2):cx + d_half // 2 + 3] = -1
+    res = []
+    for mx, i, x, y in out:
+        # 크기 시험(컬러): 이 자리 둘레에서 지름을 키워 가며
+        bestd = (-1, d0, x, y, i)
+        for dd in (int(d0 * r_) for r_ in (0.9, 1.0, 1.12, 1.25, 1.4)):
+            pad = int(0.12 * dd)
+            ax0, ay0 = max(0, x - pad - x0), max(0, y - pad - y0)
+            win = f[y0 + ay0:y0 + ay0 + dd + 2 * pad + 4, x0 + ax0:x0 + ax0 + dd + 2 * pad + 4]
+            sc, loc = _tm(win, lib[i], dd, False, False)
+            if sc > bestd[0]:
+                bestd = (sc, dd, x0 + ax0 + loc[0], y0 + ay0 + loc[1], i)
+        res.append({'id': bestd[4], 'score': round(bestd[0], 3), 'x': bestd[2], 'y': bestd[3], 'd': bestd[1], 'coarse': round(mx, 3)})
+    return res
+
+
+def locate(f, ids):
+    """주어진 캐릭터들(제출한 편성)의 얼굴이 얼굴 줄(위쪽 가로 · 왼쪽 세로)의 어디에 어떤 크기로 보이는지 찾는다.
+    보통 얼굴 지름은 화면 높이의 약 0.061, 고른 얼굴은 약 0.076 이다(세 배치 모두 같은 비율).
+    → {캐릭터 아이디: {score, x, y, d}} (점수 0.7 미만은 못 찾은 것)"""
+    H, W = f.shape[:2]
+    lib = avatar_library()
+    regions = [(int(0.12 * W), 0, int(0.92 * W), int(0.17 * H)), (0, int(0.08 * H), int(0.2 * W), int(0.98 * H))]
+    out = {}
+    for i in ids:
+        if i not in lib:
+            continue
+        best = None
+        for (x0, y0, x1, y1) in regions:
+            strip = f[y0:y1, x0:x1]
+            for dd in range(int(0.042 * H), int(0.092 * H) + 1, 2):
+                sc, loc = _tm(strip, lib[i], dd, False, False)
+                if best is None or sc > best['score']:
+                    best = {'score': round(sc, 3), 'x': x0 + loc[0], 'y': y0 + loc[1], 'd': dd, 'h': H}
+        if best and best['score'] >= 0.7:
+            out[i] = best
+    return out
+
+
+def selected_among(f, ids):
+    """제출한 캐릭터들 가운데 지금 고른(큰) 얼굴. → (아이디 또는 None, locate 결과). 크기 0.069*H 이상이면서 점수가 가장 높은 것."""
+    loc = locate(f, ids)
+    H = f.shape[0]
+    big = {i: v for i, v in loc.items() if v['d'] >= 0.069 * H}
+    if not big:
+        return None, loc
+    return max(big, key=lambda i: big[i]['score']), loc
+
+
+if __name__ == '__main__':
+    for p in sys.argv[1:]:
+        f = cv2.imread(p)
+        if '--faces' in sys.argv:
+            continue
+        print(p, identify_lc(f)[:4])

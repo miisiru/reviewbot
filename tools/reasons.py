@@ -16,7 +16,16 @@ _tables = {}
 
 def _excel(name):
     s = open(os.path.join(EXCEL, name), encoding='utf8').read()
-    return json.loads(re.sub(r'"Hash": *(-?\d+)', lambda m: f'"Hash": "{m.group(1)}"', s))
+
+    def fix(d):
+        # 이 저장소의 TextMap 열쇠는 64비트 해시(XXH64)다. 값에 「Hash64」가 같이 있는 판(me-miisi 의 4.6.0 덤프)은 그것을,
+        # 「Hash」만 있는 판(Dimbreath 꼴)은 그 값을 열쇠로 쓴다
+        if 'Hash64' in d and 'Hash' in d:
+            d['Hash'] = str(d['Hash64'])
+        elif 'Hash' in d:
+            d['Hash'] = str(d['Hash'])
+        return d
+    return json.loads(s, object_hook=fix)
 
 
 def _names(kind):

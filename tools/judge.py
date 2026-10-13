@@ -640,6 +640,9 @@ def judge(rev):
                     tot += max((best(header_name(hl), c['char'])[0] for c in chars), default=0)
             scores[m] = tot
         model = max(scores, key=scores.get)
+    import imgrec
+    ids_en = imgrec.lc_ids()[0]
+    char_lc = [ids_en.get(en_key(c['lc'])) if c['lc'] else None for c in chars]
     for fr in frames:
         f = cv2.imread(fr['path'])
         lay = fr['lay']
@@ -670,6 +673,19 @@ def judge(rev):
             # 첫 두 줄이 「等级80/80」 「846」이면 제목이 빠진 것: rev_3oxwzm). 점수가 이미 0.7 넘게 맞았으면 읽힌 것
             first2 = [t for _, _, t in pl_t if norm(t) not in PATH_WORDS and norm(t) not in guide_words()][:2]
             fr['title_found'] = any(not re.search(r'\d|/', t) for t in first2) or bool(fr['lc_scores'] and fr['lc_scores'][0][0] >= 0.7)
+            # 광추 카드 그림으로 광추를 확정한다(글 읽기와 따로 — 워터마크 · 자막 · 짧은 제목 · 언어에 강하다, tools/imgrec.py).
+            # 확정되면 글 점수를 덮는다: 그 광추를 낀 제출 캐릭터만 1.0, 나머지는 0.0
+            fr['lc_img'] = None
+            try:
+                import imgrec
+                cf = imgrec.confident_lc(imgrec.identify_lc(f))
+            except Exception:
+                cf = None
+            if cf:
+                top_id, inl, second = cf
+                fr['lc_img'] = {'id': top_id, 'inliers': inl, 'second': second, 'name': imgrec.lc_ids()[1].get(top_id)}
+                fr['lc_scores'] = sorted(((1.0 if char_lc[k] == top_id else 0.0, k) for k in range(len(chars))), reverse=True)
+                fr['title_found'] = True
             fr['superimp'], fr['superimp_line'] = superimp_from(pl)
             if fr['superimp'] is None:
                 # 게임 글(광추 이름)과 UI 글(「วางซ้อน」)의 언어가 다른 영상이 있다(rev_1g39naf: 이름은 영어, UI 는 태국어)
@@ -797,6 +813,28 @@ def judge(rev):
             fr['char_k'], fr['how'] = rest[0], 'only one left'
         if fr['char_k'] is not None and fr['char_k'] in rest:
             rest.remove(fr['char_k'])
+    # 같은 광추를 낀 캐릭터가 둘 이상이면(rev_7u7lp0: 요광 · 펄 둘 다 「Mushy Shroomy's Adventures」) 광추 그림만으로는 누구 것인지 못 가른다.
+    # 그 광추 화면이 남은 캐릭터 수와 같은 만큼 있으면, 중첩 값이 맞는 짝부터 잇고 나머지를 남은 캐릭터에게 준다.
+    # 누구 것인지는 확정이 아니라 「짝 맞춤」이라 how 에 적어 둔다(감점) — 얼굴 줄의 고른 얼굴로 가르는 것은 아직 못 한다
+    by_lc = {}
+    for k in rest:
+        if char_lc[k] is not None:
+            by_lc.setdefault(char_lc[k], []).append(k)
+    for L, G in by_lc.items():
+        if len(G) < 2:
+            continue
+        F = sorted([f for f in lcf if f['char_k'] is None and f.get('lc_img') and f['lc_img']['id'] == L], key=lambda f: (f['vid'], f['t']))
+        if len(F) != len(G):
+            continue
+        left, free = list(F), list(G)
+        for k in list(G):
+            hit = next((f for f in left if f.get('superimp') is not None and f['superimp'] == chars[k]['s']), None)
+            if hit is not None:
+                hit['char_k'], hit['how'] = k, 'lc title tie, paired by superimposition'
+                left.remove(hit)
+                free.remove(k)
+        for f, k in zip(left, free):
+            f['char_k'], f['how'] = k, 'lc title tie, paired by order'
     for fr in sorted([f for f in frames if f['tab'] == 'Eidolon'], key=lambda f: (f['vid'], f['t'])):
         s0, k0 = fr['who'][0]
         s1 = fr['who'][1][0] if len(fr['who']) > 1 else 0.0
@@ -866,6 +904,7 @@ def judge(rev):
             f0 = max(lcf, key=lambda f: f['lc_scores'][0][0] if f['lc_scores'] else 0)
             lcs_k = dict((kk, s) for s, kk in f0['lc_scores'])
             r['lc_seen'] = f0['panel_title']
+            r['lc_img'] = f0.get('lc_img')
             r['lc_title_found'] = bool(f0.get('title_found', True))
             r['lc_match'] = round(lcs_k.get(k, 0), 2)
             r['s_seen'] = f0['superimp']
