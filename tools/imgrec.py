@@ -122,18 +122,40 @@ def confident_lc(ranked):
 
 # ---------- 캐릭터 얼굴(위쪽 줄 · 왼쪽 세로 줄) ----------
 _av = None
+_skin_av = None
 D0 = 44                      # 720p 에서 보통 얼굴 지름(고른 얼굴은 더 크다)
 
 
+SKIN_KEY = 10_000_000       # 스킨 얼굴은 키 = SKIN_KEY + 스킨 아이디. 캐릭터 아이디는 avatar_of(키)
+
+
+def avatar_of(key):
+    """얼굴 라이브러리 키 → 캐릭터 아이디(스킨이면 AvatarSkin.json 의 AvatarID)"""
+    if key < SKIN_KEY:
+        return key
+    global _skin_av
+    if _skin_av is None:
+        import reasons
+        _skin_av = {r['ID']: r['AvatarID'] for r in reasons._excel('AvatarSkin.json')}
+    return _skin_av.get(key - SKIN_KEY, key)
+
+
 def avatar_library():
-    """{캐릭터 아이디: 둥근 얼굴 그림(정사각)}"""
+    """{키: 둥근 얼굴 그림(정사각)} 기본 얼굴은 캐릭터 아이디, 스킨 얼굴(data/avatarroundicon_skin)은 SKIN_KEY + 스킨 아이디.
+    목록에 스킨은 스킨 얼굴로 나온다(Castorice · Evanescia 가 맞지 않던 까닭). 둥근 얼굴 그림이 없는 스킨은 `<아이디>_icon.png`(머리 아이콘)로 대신한다."""
     global _av
     if _av is None:
         _av = {}
         paths = glob.glob(os.path.join(IMG, 'avatarroundicon', '*.webp')) + glob.glob(os.path.join(HERE, '..', 'data', 'avatarroundicon', '*.webp'))
+        paths += glob.glob(os.path.join(HERE, '..', 'data', 'avatarroundicon_skin', '*.png'))
         for p in paths:
             n = os.path.basename(p).split('.')[0]
-            if not n.isdigit() or int(n) in _av:
+            skin = os.path.basename(os.path.dirname(p)) == 'avatarroundicon_skin'
+            n = n.replace('_icon', '')
+            if not n.isdigit():
+                continue
+            key = int(n) + (SKIN_KEY if skin else 0)
+            if key in _av:
                 continue
             im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
             if im is None:
@@ -142,7 +164,7 @@ def avatar_library():
                 im = (im[..., :3] * (im[..., 3:4] / 255.0)).astype(np.uint8)
             h, w = im.shape[:2]
             s = min(h, w)
-            _av[int(n)] = im[(h - s) // 2:(h + s) // 2, (w - s) // 2:(w + s) // 2]
+            _av[key] = im[(h - s) // 2:(h + s) // 2, (w - s) // 2:(w + s) // 2]
     return _av
 
 
@@ -216,7 +238,7 @@ def faces(f, region, scale0=1.0):
             sc, loc = _tm(win, lib[i], dd, False, False)
             if sc > bestd[0]:
                 bestd = (sc, dd, x0 + ax0 + loc[0], y0 + ay0 + loc[1], i)
-        res.append({'id': bestd[4], 'score': round(bestd[0], 3), 'x': bestd[2], 'y': bestd[3], 'd': bestd[1], 'coarse': round(mx, 3)})
+        res.append({'id': avatar_of(bestd[4]), 'score': round(bestd[0], 3), 'x': bestd[2], 'y': bestd[3], 'd': bestd[1], 'coarse': round(mx, 3)})
     return res
 
 
@@ -251,6 +273,91 @@ def selected_among(f, ids):
     if not big:
         return None, loc
     return max(big, key=lambda i: big[i]['score']), loc
+
+
+# ---------- 선택된 초상화 ----------
+# 게임 UI 프리팹(ui/avatar/widget/avatarheadiconsmall · avatartoplistpanel): 고른 얼굴에만 선택 링 「HeadLine」(흰 가는 원,
+# 82.667 칸에 얼굴 56 → 링 지름은 얼굴의 1.476배, 얼굴 중심에서 오른쪽으로 3칸)이 켜진다. 얼굴 크기는 그대로다.
+# 링 그림(data/ui/HeadLine.png, HF fffffffff1/assets ui/atlas/atlasroot/common/outline/HeadLine.png)을 가는 밝은 선만 남긴 화면에
+# 크기를 바꿔 맞춰 링 자리를 찾고, 링 속 얼굴을 제출한 캐릭터들(또는 모든 캐릭터) 얼굴 그림과 대 본다.
+RING_MIN = 0.40            # 링 상관이 이 이상이어야 링으로 본다(잰 값: 링 있음 0.43~0.70, 없음 0.26 이하). 약한 상관(0.3 대)은 가려진 화면의 가짜였다
+RING_WEAK = 0.30           # 자막 · 워터마크가 링 일부를 가린 프레임: 링은 이만큼이라도, 대신 얼굴이 더 또렷해야 한다(confident 참고)
+SEL_TOP_MIN, SEL_MARGIN_MIN = 0.60, 0.20   # 링 속 얼굴을 확정하는 문턱(상관, 둘째와의 차)
+_hl = None
+
+
+def _headline():
+    global _hl
+    if _hl is None:
+        _hl = cv2.imread(os.path.join(IMG, '..', 'ui', 'HeadLine.png'), cv2.IMREAD_UNCHANGED)[..., 3]
+    return _hl
+
+
+def find_ring(f, regions=None, min_score=None):
+    """고른 얼굴의 링. → (상관, 지름, 중심 x, 중심 y) 또는 None. 영역은 기본 위쪽 가로 줄과 왼쪽 세로 줄."""
+    H, W = f.shape[:2]
+    if regions is None:
+        regions = [(int(0.12 * W), 0, int(0.92 * W), int(0.17 * H)), (0, int(0.08 * H), int(0.2 * W), int(0.98 * H))]
+    He = max(H, W * 9 / 16)       # 화면이 16:9 보다 넓으면(위아래가 잘린 녹화) UI 크기는 가로 기준: 1280x576 에서도 링은 66px
+    g = f.min(axis=2)
+    th = cv2.morphologyEx(g, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))).astype(np.float32)
+    hl = _headline()
+    best = None
+    for (x0, y0, x1, y1) in regions:
+        sub = th[y0:y1, x0:x1]
+        for D in range(int(0.075 * He), int(0.112 * He) + 1, 2):
+            if sub.shape[0] < D or sub.shape[1] < D:
+                continue
+            r = cv2.matchTemplate(sub, cv2.resize(hl, (D, D), interpolation=cv2.INTER_AREA).astype(np.float32), cv2.TM_CCOEFF_NORMED)
+            r = np.where((r >= -1) & (r <= 1), np.nan_to_num(r), 0)
+            _, mx, _, loc = cv2.minMaxLoc(r)
+            if best is None or mx > best[0]:
+                best = (float(mx), D, x0 + loc[0] + D / 2, y0 + loc[1] + D / 2)
+    return best if best and best[0] >= (RING_MIN if min_score is None else min_score) else None
+
+
+def identify_face_at(f, cx, cy, D, ids=None, dfs=(0.6, 0.65, 0.7, 0.75), padf=0.12, mask_r=0.30):
+    """링 중심 (cx, cy) · 링 지름 D 안의 둥근 얼굴이 누구인지. → [(상관, 캐릭터 아이디)] 높은 순.
+    얼굴 지름은 링의 0.6~0.75배(화면 비율마다 조금 다르다)에서 시험하고, 얼굴 가운데 원(0.3d)만 본다 — 가장자리에는
+    금빛 초승달 · 팀 번호 배지가 겹친다. 마스크를 0.4d 로 잡으면 Evanescia · Castorice 가 0.5 로 떨어진다(0.3d 면 0.84~0.87)."""
+    lib = avatar_library()
+    best = {}
+    for df in dfs:
+        d = int(round(D * df))
+        pad = int(padf * d)
+        yy, xx = np.mgrid[0:d, 0:d]
+        m = cv2.merge([(((yy - d / 2) ** 2 + (xx - d / 2) ** 2) <= (mask_r * d) ** 2).astype(np.uint8)] * 3)
+        x0, y0 = int(cx - d / 2 - pad), int(cy - d / 2 - pad)
+        win = f[max(0, y0):y0 + d + 2 * pad, max(0, x0):x0 + d + 2 * pad]
+        if win.shape[0] < d or win.shape[1] < d:
+            continue
+        for i, im in lib.items():
+            a = avatar_of(i)
+            if ids is not None and a not in ids:
+                continue
+            r = cv2.matchTemplate(win, cv2.resize(im, (d, d), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED, mask=m)
+            r = np.where((r >= -1) & (r <= 1), np.nan_to_num(r), 0)
+            v = round(float(r.max()), 3)
+            if v > best.get(a, -1):
+                best[a] = v
+    return sorted(((v, a) for a, v in best.items()), reverse=True)
+
+
+def selected_portrait(f, ids=None):
+    """지금 고른 얼굴. → {'ring': 링 상관, 'x','y','d': 링 자리, 'ranked': [(상관, 아이디)...]} 또는 None(링이 안 보임).
+    ids 가 있으면 그 캐릭터들 가운데서만 고른다(제출한 편성). dict {캐릭터 아이디: 묶음} 이면 묶음 단위로 합쳐 낸다. 얼굴 지름은 링의 56/82.667 * (124/110) 배 — 720p 에서 약 44."""
+    ring = find_ring(f, min_score=RING_WEAK)
+    if ring is None:
+        return None
+    sc, D, rx, ry = ring
+    ranked = identify_face_at(f, rx, ry, D, ids)
+    if isinstance(ids, dict):
+        # 같은 캐릭터의 여러 아이디(개척자 여덟 · 3월 7일 둘)는 한 묶음으로 — 둘째와의 차가 같은 캐릭터 끼리가 되지 않게
+        g = {}
+        for v, a in ranked:
+            g[ids[a]] = max(g.get(ids[a], -1), v)
+        ranked = sorted(((v, k) for k, v in g.items()), reverse=True)
+    return {'ring': round(sc, 3), 'x': rx, 'y': ry, 'd': D, 'ranked': ranked}
 
 
 # ---------- 성혼 노드 아이콘 ----------
@@ -349,3 +456,14 @@ if __name__ == '__main__':
         if '--faces' in sys.argv:
             continue
         print(p, identify_lc(f)[:4])
+
+
+def selected_confident(sp):
+    """selected_portrait 결과가 확정인가: 얼굴 상관 · 둘째와의 차 문턱, 링이 약하면(RING_MIN 미만) 더 또렷해야 한다."""
+    if not sp or not sp['ranked']:
+        return False
+    top = sp['ranked'][0][0]
+    sec = sp['ranked'][1][0] if len(sp['ranked']) > 1 else 0
+    if top < SEL_TOP_MIN or top - sec < SEL_MARGIN_MIN:
+        return False
+    return sp['ring'] >= RING_MIN or (top >= 0.70 and top - sec >= 0.30)
