@@ -753,20 +753,29 @@ def judge(rev):
                 continue
             Hh, Ww = fdet.shape[:2]
             crop = fdet[int(0.03 * Hh):int(0.22 * Hh), int(0.66 * Ww):int(0.99 * Ww)]
-            raw.append((a, b, [t for _, _, t in read_lines(crop, [model])[model][:4]]))
+            # 오른쪽 위 속성 아이콘(글과 무관한 근거). 확정 문턱을 넘은 것만 남긴다
+            el = None
+            try:
+                import imgrec
+                rd = imgrec.read_element_icon(fdet)
+                if rd and rd[1] >= imgrec.ELEM_MIN and rd[2] >= imgrec.ELEM_MARGIN:
+                    el = rd[0]
+            except Exception:
+                el = None
+            raw.append((a, b, [t for _, _, t in read_lines(crop, [model])[model][:4]], el))
         # 디테일 화면마다 같이 찍히는 글(「캐릭터 공략」 같은 버튼 글)은 이름이 아니다 — 화면 셋 이상에서 절반 넘게 나오면 뺀다
         cnt = {}
-        for _, _, ls in raw:
+        for _, _, ls, _el in raw:
             for n_ in {norm(t) for t in ls}:
                 cnt[n_] = cnt.get(n_, 0) + 1
         static = {n_ for n_, c_ in cnt.items() if len(raw) >= 3 and c_ > 0.5 * len(raw)}
-        for a, b, ls in raw:
+        for a, b, ls, el in raw:
             # 길 이름(「Elation」 등)이 개척자 별칭 「Trailblazer (Elation)」과 맞아 점수가 오르지 않게, 길 이름 줄은 빼고 본다
             names_only = [t for t in ls if norm(t) not in PATH_WORDS and norm(t) not in static and norm(t)]
             sc = sorted(((max((best(t, c['char'])[0] for t in names_only), default=0), k2) for k2, c in enumerate(chars)), reverse=True)
             if tb and sc and sc[0][0] < 0.7 and names_only:
                 sc = [(0.7, tb[0])] + [z for z in sc if z[1] != tb[0]]     # 어느 이름과도 안 맞는 이름 줄 = 플레이어 이름 = 개척자
-            dets.append({'vid': vi, 't0': a, 't1': b, 'text': ' '.join(ls), 'who': sc})
+            dets.append({'vid': vi, 't0': a, 't1': b, 'text': ' '.join(ls), 'who': sc, 'elem': el})
     # 디테일 화면 뒤에 처음 나오는 광추 한 장 · 성혼 한 장만 그 캐릭터 것으로 본다. 같은 탭이 디테일 없이 또 나오면
     # 그 사이 캐릭터 줄로 넘긴 것이라 이어받지 않는다(종말 열람 화면 등에서 광추 · 성혼을 먼저 넘겨 보고 디테일을 나중에 보는 경우)
     for fr in frames:
@@ -916,6 +925,26 @@ def judge(rev):
                         fr['sel_k'], fr['sel_conf'], fr['sel_lag'] = k2, True, True
     except Exception:
         pass
+    # 머리글의 길 아이콘(영어 화면에만 있다): 머리글 이름과 같이 바뀌므로 어긋나면 이름을 잘못 읽은 것이다. 기록만 하고(path_icon · path_conflict)
+    # 맞으면 근거에 보탠다.
+    want_path = []
+    try:
+        import imgrec
+        want_path = [imgrec.path_of_char(en_key(c['char'])) for c in chars]
+        for fr in frames:
+            fr['path_icon'], fr['path_conflict'] = None, False
+            if not fr.get('lay'):
+                continue
+            img = cv2.imread(fr['path'])
+            rd = imgrec.read_path_icon(img, header_crop(img, fr['lay']), fr['lay'][2]) if img is not None else None
+            if not rd or rd[1] < imgrec.PATH_MIN or rd[2] < imgrec.PATH_MARGIN:
+                continue
+            fr['path_icon'] = rd[0]
+            k = fr.get('char_k')
+            if k is not None and want_path[k] and want_path[k] != rd[0]:
+                fr['path_conflict'] = True
+    except Exception:
+        pass
     # 정한 근거와 따로 맞는 다른 근거가 있으면 적어 둔다(머리글 · 광추 제목 · 성혼 이름). 둘이 맞으면 확실하다
     for fr in frames:
         k = fr.get('char_k')
@@ -938,6 +967,8 @@ def judge(rev):
         # 캐릭터를 넘긴 직후 한두 프레임은 머리글이 먼저 바뀌고 링은 늦게 따라와 어긋나 보이므로, 어긋남은 판정에 쓰지 않고 기록만 한다.
         if fr.get('sel_k') == k and fr.get('sel_conf'):
             also.append('portrait')
+        if fr.get('path_icon') and not fr.get('path_conflict') and k is not None and k < len(want_path) and fr['path_icon'] == want_path[k]:
+            also.append('path icon')
         if also:
             fr['how'] = how + ' + ' + ' + '.join(also)
     # 캐릭터별 결과
@@ -946,6 +977,14 @@ def judge(rev):
         lcf = [f for f in frames if f['tab'] == 'LightCone' and f.get('char_k') == k]
         eif = [f for f in frames if f['tab'] == 'Eidolon' and f.get('char_k') == k]
         r = {'char': c['char'], 'submitted': {'lc': c['lc'], 's': c['s'], 'e': c['e']}}
+        # 상세 화면 속성 아이콘이 제출 캐릭터의 속성과 맞는지(기록만)
+        try:
+            import imgrec
+            r['elem_want'] = imgrec.element_of_char(en_key(c['char']))
+            r['elem_seen'] = [x['elem'] for x in dets if x.get('elem') and x['who'] and x['who'][0][1] == k and x['who'][0][0] >= 0.9]
+            r['elem_conflict'] = bool(r['elem_want'] and any(e != r['elem_want'] for e in r['elem_seen']))
+        except Exception:
+            pass
         if lcf:
             f0 = max(lcf, key=lambda f: f['lc_scores'][0][0] if f['lc_scores'] else 0)
             lcs_k = dict((kk, s) for s, kk in f0['lc_scores'])

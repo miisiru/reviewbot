@@ -360,6 +360,141 @@ def selected_portrait(f, ids=None):
     return {'ring': round(sc, 3), 'x': rx, 'y': ry, 'd': D, 'ranked': ranked}
 
 
+# ---------- 헤더의 운명의 길 아이콘 ----------
+# 모든 탭의 머리글(왼쪽 위) 「길 이름 / 캐릭터 이름」 앞에 길 아이콘(ProfessionIconSmall, 720p 에서 약 14px)이 붙는다. 글자가 워터마크에
+# 덮여도 아이콘은 읽히고, 머리글 이름과 같이 바뀌므로 어긋나면 이름을 잘못 읽은 것이다(캐릭터를 넘긴 직후의 늦음이 없다).
+PATH_EN = {'Warrior': 'Destruction', 'Knight': 'Preservation', 'Rogue': 'The Hunt', 'Mage': 'Erudition', 'Shaman': 'Harmony',
+           'Warlock': 'Nihility', 'Pirest': 'Abundance', 'Memory': 'Remembrance', 'Joy': 'Elation'}
+PATH_OF_BASETYPE = {'Warrior': 'Warrior', 'Knight': 'Knight', 'Rogue': 'Rogue', 'Mage': 'Mage', 'Shaman': 'Shaman', 'Warlock': 'Warlock',
+                    'Priest': 'Pirest', 'Memory': 'Memory', 'Elation': 'Joy'}          # AvatarBaseType.ID → 파일 이름 조각
+PATH_MIN, PATH_MARGIN = 0.70, 0.15
+_pathlib = None
+
+
+def path_library():
+    """{길(파일 조각): 회색 그림(알파 곱함)}"""
+    global _pathlib
+    if _pathlib is None:
+        _pathlib = {}
+        for p in glob.glob(os.path.join(IMG, '..', 'ui', 'path', '*_small.png')):
+            im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+            _pathlib[os.path.basename(p).split('_')[0]] = cv2.cvtColor((im[..., :3] * (im[..., 3:4] / 255.0)).astype(np.uint8), cv2.COLOR_BGR2GRAY)
+    return _pathlib
+
+
+def read_path_icon(f, crop=None, unit=None):
+    """머리글의 길 아이콘. → (길 조각, 상관, 둘째와의 차, (x, y, d)) 또는 None. 크기를 바꿔 가며 9종과 대 본다.
+    crop 이 없으면 화면 왼쪽 위. judge 는 메뉴 줄 간격 unit(lay[2], 720p 에서 약 62)으로 잡은 머리글 영역을 넘긴다 — 위아래가
+    잘렸거나 테두리 안에 든 영상에서도 맞는다. 아이콘 지름은 unit 의 0.22배 안팎."""
+    H, W = f.shape[:2]
+    He = max(H, W * 9 / 16)
+    g = cv2.cvtColor(crop if crop is not None else f[:int(0.13 * H), :int(0.32 * W)], cv2.COLOR_BGR2GRAY)
+    u = unit if unit else 62.0 * He / 720
+    dmin, dmax = int(0.17 * u), int(0.29 * u)
+    scores = {}
+    where = {}
+    for name, t in path_library().items():
+        for d in range(dmin, dmax + 1):
+            if d < 8 or g.shape[0] < d or g.shape[1] < d:
+                continue
+            r = cv2.matchTemplate(g, cv2.resize(t, (d, d), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED)
+            r = np.where((r >= -1) & (r <= 1), np.nan_to_num(r), 0)
+            _, mx, _, loc = cv2.minMaxLoc(r)
+            if mx > scores.get(name, -1):
+                scores[name], where[name] = float(mx), (loc[0], loc[1], d)
+    if not scores:
+        return None
+    rk = sorted(scores.items(), key=lambda kv: -kv[1])
+    top = rk[0]
+    # 아이콘 자리는 하나다 — 둘째는 같은 자리에서 다른 길로 읽힌 점수만
+    pos = where[top[0]]
+    same = [v for n, v in rk[1:] if abs(where[n][0] - pos[0]) <= 3 and abs(where[n][1] - pos[1]) <= 3]
+    sec = max(same) if same else (rk[1][1] if len(rk) > 1 else 0)
+    return top[0], round(top[1], 3), round(top[1] - sec, 3), pos
+
+
+def path_of_char(en_name):
+    """제출 캐릭터의 길(파일 조각). 개척자는 이름 끝 괄호의 길."""
+    import re
+    m = re.search(r'\(([^()]*)\)$', en_name)
+    if en_name.startswith('Trailblazer'):
+        inv = {v: k for k, v in PATH_EN.items()}
+        return inv.get(m.group(1)) if m else None
+    import reasons
+    out = set()
+    for i in char_ids(en_name):
+        for r in reasons._excel('AvatarConfig.json'):
+            if r['AvatarID'] == i:
+                out.add(PATH_OF_BASETYPE.get(r.get('AvatarBaseType')))
+    out.discard(None)
+    return out.pop() if len(out) == 1 else None
+
+
+# ---------- 상세 화면의 속성 아이콘 ----------
+# 상세(Details) 탭 오른쪽 위, 캐릭터 이름 줄 끝에 속성 아이콘(IconNatureColor, 720p 에서 약 40px 정사각형)이 있다. 글과 무관한 근거.
+ELEMENTS = ('Fire', 'Ice', 'Imaginary', 'Physical', 'Quantum', 'Thunder', 'Wind')
+ELEM_MIN, ELEM_MARGIN = 0.75, 0.08
+_elem = None
+
+
+def element_library():
+    """{속성: 회색 그림(알파 곱함)} — 색 · 마스크로 맞추면 어두운 불꽃(Fire)이 낮게 나오고 엉뚱한 자리가 붙었다. 회색이 낫다"""
+    global _elem
+    if _elem is None:
+        _elem = {}
+        for n in ELEMENTS:
+            for kind in ('color', 'dtype'):          # 물리는 IconNatureColor 가 없어 IconDamageType 로
+                p = os.path.join(IMG, '..', 'ui', 'element', f'{n}_{kind}.png')
+                if os.path.exists(p):
+                    im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+                    _elem[n] = cv2.cvtColor((im[..., :3] * (im[..., 3:4] / 255.0)).astype(np.uint8), cv2.COLOR_BGR2GRAY)
+                    break
+    return _elem
+
+
+def read_element_icon(f):
+    """상세 화면 오른쪽 위의 속성 아이콘. → (속성, 상관, 둘째와의 차, (x, y, d)) 또는 None. 가장 잘 맞은 자리에서 다른 속성과 견준다."""
+    H, W = f.shape[:2]
+    He = max(H, W * 9 / 16)
+    x0 = int(0.88 * W)        # 이름 줄 끝(오른쪽 12% 안)에만 있다 — 더 넓게 보면 다른 그림이 속성으로 읽힌다(rev_1gocivt 290초)
+    g = cv2.cvtColor(f[:int(0.2 * H), x0:], cv2.COLOR_BGR2GRAY)
+    hits = []
+    for name, t in element_library().items():
+        for d in range(int(0.045 * He), int(0.066 * He) + 1, 2):
+            if g.shape[0] < d or g.shape[1] < d:
+                continue
+            r = cv2.matchTemplate(g, cv2.resize(t, (d, d), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED)
+            r = np.where((r >= -1) & (r <= 1), np.nan_to_num(r), 0)
+            _, mx, _, loc = cv2.minMaxLoc(r)
+            hits.append((float(mx), name, d, loc[0] + x0, loc[1], r))
+    if not hits:
+        return None
+    best = max(hits, key=lambda h: h[0])
+    # 같은 자리(±4px)에서 다른 속성이 얻은 최고 점수
+    sec = 0.0
+    for sc, name, d, x, y, r in hits:
+        if name == best[1]:
+            continue
+        lx, ly = best[3] - x0, best[4]
+        win = r[max(0, ly - 4):ly + 5, max(0, lx - 4):lx + 5]
+        if win.size:
+            sec = max(sec, float(win.max()))
+    return best[1], round(best[0], 3), round(best[0] - sec, 3), (best[3], best[4], best[2])
+
+
+def element_of_char(en_name):
+    """제출 캐릭터의 속성(Fire …). 개척자는 이름 끝 괄호의 길로 아이디를 좁힌다."""
+    import re, reasons
+    rows = {r['AvatarID']: r for r in reasons._excel('AvatarConfig.json')}
+    ids = char_ids(en_name)
+    if en_name.startswith('Trailblazer'):
+        want = path_of_char(en_name)
+        ids = [i for i in ids if PATH_OF_BASETYPE.get(rows.get(i, {}).get('AvatarBaseType')) == want]
+    out = {rows[i].get('DamageType') for i in ids if i in rows}
+    out.discard(None)
+    return out.pop() if len(out) == 1 else None
+
+
 # ---------- 성혼 노드 아이콘 ----------
 # 켜진 성혼 노드는 그 캐릭터의 성혼 아이콘(AvatarRankConfig.IconPath)을 보여 주고, 잠긴 노드는 자물쇠 + 거의 안 보이는 아이콘(알파 0.157)이다
 # (UI 프리팹 ui/avatar/rank/avatarrankpanel: Activated · UnActivated · Locked). 아이콘 상관이 켜진 노드 0.64~0.83, 잠긴 노드 0.31~0.51,
