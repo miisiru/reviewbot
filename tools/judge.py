@@ -314,11 +314,18 @@ LOCK_MID = 0.7
 FIT_SURE = 0.1     # 가장 잘 맞는 k 와 다음 k 의 어긋남 차이가 이보다 작으면 애매
 
 
-def eidolon_fit(sc):
-    """노드 점수 여섯 → (열린 수 k, 다음으로 맞는 k, 두 어긋남의 차)."""
+ICON_OFF = 0.58    # 성혼 아이콘 상관이 이 이상이면 그 노드는 켜져 있다(켜진 0.64~0.83, 잠긴 0.31~0.51, 남의 아이콘 0.59 이하)
+
+
+def eidolon_fit(sc, ic=None):
+    """노드 점수 여섯 → (열린 수 k, 다음으로 맞는 k, 두 어긋남의 차).
+    ic 는 노드별 성혼 아이콘 상관(imgrec.node_icon_scores). 켜짐의 증거로만 쓴다 — 연출 중이거나 잠긴 노드는 낮게 나오니
+    낮다고 잠김이라 하지 않고, 높은 노드가 잠김 쪽에 있으면 그만큼 어긋남으로 센다."""
     # None(가려진 노드)은 어느 쪽이든 어긋남 0 — 앞뒤 노드가 정한다
     cost = [sum(max(0.0, v - LOCK_MID) for v in sc[:k] if v is not None)
-            + sum(max(0.0, LOCK_MID - v) for v in sc[k:] if v is not None) for k in range(len(sc) + 1)]
+            + sum(max(0.0, LOCK_MID - v) for v in sc[k:] if v is not None)
+            + (sum(2 * max(0.0, v - ICON_OFF) for v in ic[k:] if v is not None) if ic else 0.0)
+            for k in range(len(sc) + 1)]
     order = sorted(range(len(cost)), key=lambda k: cost[k])
     return order[0], order[1], round(cost[order[1]] - cost[order[0]], 3)
 
@@ -924,7 +931,19 @@ def judge(rev):
             f0 = max(eif, key=lambda f: (id_strength(f), f.get('lock_frames') or 0))
             act = 1 if f0['activatable'] else 0
             sc = f0.get('lock_scores')
-            fit = eidolon_fit(sc) if sc and len(sc) == 6 else None
+            ic = None
+            try:
+                import imgrec
+                img = cv2.imread(f0['path']) if f0.get('lay') else None
+                cids = imgrec.char_ids(en_key(c['char']))
+                if img is not None and cids:
+                    _, pred = lock_states(img, f0['lay'], want_pred=True)
+                    if pred is not None:
+                        ic = imgrec.node_icon_scores(img, pred, f0['lay'][2], cids)
+            except Exception:
+                ic = None
+            r['icon_scores'] = ic
+            fit = eidolon_fit(sc, ic) if sc and len(sc) == 6 else None
             if fit:
                 f0['locks'] = 6 - fit[0]
             r['locks'] = f0['locks']

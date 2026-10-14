@@ -253,6 +253,96 @@ def selected_among(f, ids):
     return max(big, key=lambda i: big[i]['score']), loc
 
 
+# ---------- 성혼 노드 아이콘 ----------
+# 켜진 성혼 노드는 그 캐릭터의 성혼 아이콘(AvatarRankConfig.IconPath)을 보여 주고, 잠긴 노드는 자물쇠 + 거의 안 보이는 아이콘(알파 0.157)이다
+# (UI 프리팹 ui/avatar/rank/avatarrankpanel: Activated · UnActivated · Locked). 아이콘 상관이 켜진 노드 0.64~0.83, 잠긴 노드 0.31~0.51,
+# 다른 캐릭터 아이콘은 0.59 이하 — 노드 상태와 누구인지를 한꺼번에 알려 준다.
+_rank = None
+_avid = None
+ICON_ON = 0.60          # 이 이상이면 그 캐릭터의 켜진 노드 아이콘으로 본다
+
+
+def rank_icons():
+    """{(캐릭터 아이디, 성혼 번호 1~6): 그림(알파 포함)}"""
+    global _rank
+    if _rank is None:
+        _rank = {}
+        fp = os.path.join(HERE, '..', 'data', 'ExcelOutput', 'AvatarRankConfig.json')
+        for r in json.load(open(fp, encoding='utf8')):
+            cid, rk = r['RankID'] // 100, r['Rank']
+            fn = os.path.basename(r.get('IconPath') or '').rsplit('.', 1)[0]
+            p = os.path.join(IMG, 'skillicons', str(cid), fn + '.webp')
+            if os.path.exists(p):
+                im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+                if im is not None:
+                    _rank[(cid, rk)] = im
+    return _rank
+
+
+def avatar_ids():
+    """{영어 이름: [캐릭터 아이디...]} 개척자는 여덟 아이디 모두(성별 · 운명의 길)"""
+    global _avid
+    if _avid is None:
+        import reasons, names
+        en = names._load('EN')
+        _avid = {}
+        for r in reasons._excel('AvatarConfig.json'):
+            e = names.clean(en.get(str((r.get('AvatarName') or {}).get('Hash')), ''))
+            if e:
+                _avid.setdefault(e, []).append(r['AvatarID'])
+        tb = sorted({i for v in _avid.values() for i in v if 8001 <= i <= 8020})
+        for k in ('Trailblazer', 'Trailblazer (Elation)', 'Trailblazer (Remembrance)', 'Trailblazer (Harmony)',
+                  'Trailblazer (Destruction)', 'Trailblazer (Preservation)'):
+            _avid[k] = tb
+    return _avid
+
+
+def char_ids(en_name):
+    import re
+    a = avatar_ids()
+    return a.get(en_name) or a.get(re.sub(r'\s*\([^()]*\)$', '', en_name)) or []
+
+
+def _icon_score(g, cx, cy, sp, im):
+    bgr, a = (im[..., :3], (im[..., 3] > 40).astype(np.uint8)) if im.shape[2] == 4 else (im, np.ones(im.shape[:2], np.uint8))
+    if im.shape[2] == 4:
+        al = im[..., 3:4] / 255.0
+        bgr = (im[..., :3] * al).astype(np.uint8)
+    best = 0.0
+    for k in (0.50, 0.58, 0.66, 0.74):
+        d = max(10, int(round(k * sp)))
+        t = cv2.cvtColor(cv2.resize(bgr, (d, d), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+        m = cv2.resize(a, (d, d), interpolation=cv2.INTER_NEAREST) * 255
+        yy, xx = np.mgrid[0:d, 0:d]
+        m = (m * (((yy - d / 2) ** 2 + (xx - d / 2) ** 2) <= (0.46 * d) ** 2)).astype(np.uint8)
+        pad = int(0.25 * sp)
+        x0, y0 = int(cx - d / 2 - pad), int(cy - d / 2 - pad)
+        win = g[max(0, y0):y0 + d + 2 * pad, max(0, x0):x0 + d + 2 * pad]
+        if win.shape[0] < d or win.shape[1] < d or m.sum() < 50:
+            continue
+        r = cv2.matchTemplate(win, t, cv2.TM_CCOEFF_NORMED, mask=m)
+        r = np.where((r >= -1) & (r <= 1), np.nan_to_num(r), 0)
+        best = max(best, float(r.max()))
+    return best
+
+
+def node_icon_scores(frame, pred, sp, cids):
+    """성혼 화면의 노드 여섯 자리(pred)에서 이 캐릭터(아이디 여럿이면 가장 맞는 것)의 성혼 아이콘과의 상관. → [6개, 못 보면 None]"""
+    lib = rank_icons()
+    g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    out = []
+    for n in range(6):
+        best = None
+        for c in cids:
+            im = lib.get((c, n + 1))
+            if im is None:
+                continue
+            v = _icon_score(g, pred[n][0], pred[n][1], sp, im)
+            best = v if best is None or v > best else best
+        out.append(None if best is None else round(best, 2))
+    return out
+
+
 if __name__ == '__main__':
     for p in sys.argv[1:]:
         f = cv2.imread(p)
