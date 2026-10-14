@@ -248,6 +248,20 @@ def run(rev, do_gp=True, reuse=False):
         if rt is not None:
             menu_never_shown = True
             out['checks'].append(f'no character menu anywhere in the video; result screen at {rt} (build not shown)')
+    # 머리글 길 아이콘 · 상세 화면 속성 아이콘은 검증 전용: 읽은 캐릭터의 길 · 속성과 확정으로 다르면 바로 CHECK
+    # (캐릭터를 잘못 읽었거나 다른 캐릭터 화면이 섞였다는 뜻 — 어느 쪽이 틀렸는지는 사람이 본다)
+    try:
+        import imgrec
+        for c in b['chars']:
+            if c.get('path_conflicts'):
+                w = imgrec.PATH_EN.get(c['path_want'], c['path_want'])
+                seen = sorted({imgrec.PATH_EN.get(x['seen'], x['seen']) for x in c['path_conflicts']})
+                at = ', '.join(f"{x['t']:.1f}s" for x in c['path_conflicts'][:3])
+                out['check_reasons'].append(f"Header path icon shows {'/'.join(seen)} but {c['char']} is {w} (at {at}) - check that the character was read correctly")
+            if c.get('elem_conflict'):
+                out['check_reasons'].append(f"Details element icon shows {'/'.join(sorted(set(c['elem_seen'])))} but {c['char']} is {c['elem_want']} - check that the character was read correctly")
+    except Exception:
+        pass
     for c in b['chars']:
         name = c['char']
         sub = c['submitted']

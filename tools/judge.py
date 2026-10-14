@@ -925,24 +925,49 @@ def judge(rev):
                         fr['sel_k'], fr['sel_conf'], fr['sel_lag'] = k2, True, True
     except Exception:
         pass
-    # 머리글의 길 아이콘(영어 화면에만 있다): 머리글 이름과 같이 바뀌므로 어긋나면 이름을 잘못 읽은 것이다. 기록만 하고(path_icon · path_conflict)
-    # 맞으면 근거에 보탠다.
+    # 머리글의 길 아이콘(모든 언어 화면에 있다). 검증 전용 — 읽은 캐릭터의 길과 아이콘의 길이 다르면 path_conflict(→ auto_judge 가 CHECK).
+    # 아이콘은 머리글 글자보다 0.2초쯤 늦게 바뀌므로(rev_1p4qums 207.7초: 글자는 새 캐릭터, 아이콘은 앞 캐릭터) 저장 프레임이 아니라
+    # 0.45초 뒤 프레임에서 읽고, 어긋나면 0.9초 뒤에 한 번 더 본다. 둘 다 어긋나야 충돌이다. 뒤 프레임을 볼 수 없으면(다음 저장 프레임이 바로 뒤)
+    # 모르는 것으로 둔다.
     want_path = []
     try:
-        import imgrec
+        import imgrec, tabs
         want_path = [imgrec.path_of_char(en_key(c['char'])) for c in chars]
+        probe_cache = {}
+
+        def icon_at(fr, t):
+            vi = fr['vid']
+            video = os.path.join(d, vids[vi].get('file', f'video{vi}.mp4'))
+            if video not in probe_cache:
+                probe_cache[video] = tabs.probe(video)
+            _, W_, H_ = probe_cache[video]
+            f2 = next(tabs.frames(video, t, 0.05, 30, W_, H_), (None, None))[1]
+            if f2 is None:
+                return None
+            rd = imgrec.read_path_icon(f2, header_crop(f2, fr['lay']), fr['lay'][2])
+            return rd[0] if rd and rd[1] >= imgrec.PATH_MIN and rd[2] >= imgrec.PATH_MARGIN else None
+
         for fr in frames:
             fr['path_icon'], fr['path_conflict'] = None, False
-            if not fr.get('lay'):
-                continue
-            img = cv2.imread(fr['path'])
-            rd = imgrec.read_path_icon(img, header_crop(img, fr['lay']), fr['lay'][2]) if img is not None else None
-            if not rd or rd[1] < imgrec.PATH_MIN or rd[2] < imgrec.PATH_MARGIN:
-                continue
-            fr['path_icon'] = rd[0]
             k = fr.get('char_k')
-            if k is not None and want_path[k] and want_path[k] != rd[0]:
-                fr['path_conflict'] = True
+            if not fr.get('lay') or k is None or k >= len(want_path) or not want_path[k]:
+                continue
+            nxt = min((g['t'] for g in frames if g['vid'] == fr['vid'] and g['t'] > fr['t']), default=None)
+            # 저장 프레임 · 0.45초 뒤 · 0.9초 뒤. 하나라도 이 캐릭터의 길이면 어긋남이 아니다 — 저장 프레임은 아이콘이 늦어 앞 캐릭터 것이고,
+            # 뒤 프레임은 그 사이 넘어간 다음 캐릭터 것일 수 있다(rev_1p4qums 186.3초: 186.4초에 넘어감). 읽은 것이 전부 다른 길일 때만 충돌.
+            img0 = cv2.imread(fr['path'])
+            rd0 = imgrec.read_path_icon(img0, header_crop(img0, fr['lay']), fr['lay'][2]) if img0 is not None else None
+            seen = [rd0[0]] if rd0 and rd0[1] >= imgrec.PATH_MIN and rd0[2] >= imgrec.PATH_MARGIN else []
+            for dt in (0.45, 0.9):
+                if want_path[k] in seen:
+                    break
+                if nxt is None or fr['t'] + dt < nxt - 0.05:
+                    x_ = icon_at(fr, fr['t'] + dt)
+                    if x_:
+                        seen.append(x_)
+            if seen:
+                fr['path_icon'] = want_path[k] if want_path[k] in seen else seen[-1]
+                fr['path_conflict'] = want_path[k] not in seen and len(seen) >= 2
     except Exception:
         pass
     # 정한 근거와 따로 맞는 다른 근거가 있으면 적어 둔다(머리글 · 광추 제목 · 성혼 이름). 둘이 맞으면 확실하다
@@ -967,8 +992,6 @@ def judge(rev):
         # 캐릭터를 넘긴 직후 한두 프레임은 머리글이 먼저 바뀌고 링은 늦게 따라와 어긋나 보이므로, 어긋남은 판정에 쓰지 않고 기록만 한다.
         if fr.get('sel_k') == k and fr.get('sel_conf'):
             also.append('portrait')
-        if fr.get('path_icon') and not fr.get('path_conflict') and k is not None and k < len(want_path) and fr['path_icon'] == want_path[k]:
-            also.append('path icon')
         if also:
             fr['how'] = how + ' + ' + ' + '.join(also)
     # 캐릭터별 결과
@@ -977,7 +1000,10 @@ def judge(rev):
         lcf = [f for f in frames if f['tab'] == 'LightCone' and f.get('char_k') == k]
         eif = [f for f in frames if f['tab'] == 'Eidolon' and f.get('char_k') == k]
         r = {'char': c['char'], 'submitted': {'lc': c['lc'], 's': c['s'], 'e': c['e']}}
-        # 상세 화면 속성 아이콘이 제출 캐릭터의 속성과 맞는지(기록만)
+        # 머리글 길 아이콘이 제출 캐릭터의 길과 확정으로 어긋난 프레임(검증 전용 — auto_judge 가 CHECK 로 보낸다)
+        r['path_want'] = want_path[k] if k < len(want_path) else None
+        r['path_conflicts'] = [{'t': f['t'], 'vid': f['vid'], 'seen': f['path_icon']} for f in frames if f.get('char_k') == k and f.get('path_conflict')]
+        # 상세 화면 속성 아이콘이 제출 캐릭터의 속성과 맞는지(검증 전용)
         try:
             import imgrec
             r['elem_want'] = imgrec.element_of_char(en_key(c['char']))

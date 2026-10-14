@@ -367,7 +367,7 @@ PATH_EN = {'Warrior': 'Destruction', 'Knight': 'Preservation', 'Rogue': 'The Hun
            'Warlock': 'Nihility', 'Pirest': 'Abundance', 'Memory': 'Remembrance', 'Joy': 'Elation'}
 PATH_OF_BASETYPE = {'Warrior': 'Warrior', 'Knight': 'Knight', 'Rogue': 'Rogue', 'Mage': 'Mage', 'Shaman': 'Shaman', 'Warlock': 'Warlock',
                     'Priest': 'Pirest', 'Memory': 'Memory', 'Elation': 'Joy'}          # AvatarBaseType.ID → 파일 이름 조각
-PATH_MIN, PATH_MARGIN = 0.70, 0.15
+PATH_MIN, PATH_MARGIN = 0.58, 0.08
 _pathlib = None
 
 
@@ -413,19 +413,26 @@ def read_path_icon(f, crop=None, unit=None):
     return top[0], round(top[1], 3), round(top[1] - sec, 3), pos
 
 
-def path_of_char(en_name):
-    """제출 캐릭터의 길(파일 조각). 개척자는 이름 끝 괄호의 길."""
+def _path_in_name(en_name):
+    """이름 끝 괄호가 길 이름이면 그 길(파일 조각). 「Trailblazer (Elation)」 · 「March 7th (Hunt)」"""
     import re
     m = re.search(r'\(([^()]*)\)$', en_name)
-    if en_name.startswith('Trailblazer'):
-        inv = {v: k for k, v in PATH_EN.items()}
-        return inv.get(m.group(1)) if m else None
+    if not m:
+        return None
+    word = m.group(1).strip()
+    word = {'Hunt': 'The Hunt'}.get(word, word)
+    inv = {v: k for k, v in PATH_EN.items()}
+    return inv.get(word)
+
+
+def path_of_char(en_name):
+    """제출 캐릭터의 길(파일 조각). 이름 끝 괄호가 길이면 그 길, 아니면 아이디들의 길(하나로 정해질 때만)."""
+    p = _path_in_name(en_name)
+    if p or en_name.startswith('Trailblazer'):
+        return p
     import reasons
-    out = set()
-    for i in char_ids(en_name):
-        for r in reasons._excel('AvatarConfig.json'):
-            if r['AvatarID'] == i:
-                out.add(PATH_OF_BASETYPE.get(r.get('AvatarBaseType')))
+    rows = {r['AvatarID']: r for r in reasons._excel('AvatarConfig.json')}
+    out = {PATH_OF_BASETYPE.get(rows[i].get('AvatarBaseType')) for i in char_ids(en_name) if i in rows}
     out.discard(None)
     return out.pop() if len(out) == 1 else None
 
@@ -483,12 +490,12 @@ def read_element_icon(f):
 
 
 def element_of_char(en_name):
-    """제출 캐릭터의 속성(Fire …). 개척자는 이름 끝 괄호의 길로 아이디를 좁힌다."""
-    import re, reasons
+    """제출 캐릭터의 속성(Fire …). 이름 끝 괄호가 길이면(개척자 · 3월 7일) 그 길의 아이디로 좁힌다."""
+    import reasons
     rows = {r['AvatarID']: r for r in reasons._excel('AvatarConfig.json')}
     ids = char_ids(en_name)
-    if en_name.startswith('Trailblazer'):
-        want = path_of_char(en_name)
+    want = _path_in_name(en_name)
+    if want:
         ids = [i for i in ids if PATH_OF_BASETYPE.get(rows.get(i, {}).get('AvatarBaseType')) == want]
     out = {rows[i].get('DamageType') for i in ids if i in rows}
     out.discard(None)
