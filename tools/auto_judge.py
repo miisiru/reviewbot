@@ -326,7 +326,7 @@ def run(rev, do_gp=True, reuse=False):
     # 2) UID
     uid = read_uid(rev, b['frames'])
     out['uid'] = uid
-    if not uid and not menu_never_shown:     # UID 는 캐릭터 화면에 나온다 — 화면이 아예 없으면 못 읽은 게 아니다
+    if not uid:     # UID 를 못 읽으면 감점이 아니라 바로 CHECK(사용자, 2026-10-15) — 화면이 없어도 UID 를 확인 못 한 것은 같다
         ded('uid_missing', 'UID not readable')
     tm('uid')
     # 3) 전투 HUD

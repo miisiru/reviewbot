@@ -370,6 +370,44 @@ def hourglass_cells(f):
     return sorted(out)
 
 
+def hourglass_badge(f):
+    """행동 순서 줄이 길어 화면 밑으로 넘치면 모래시계 칸이 작은 배지(붉은 원 안의 숫자 + 오른쪽 작은 모래시계)로 줄어
+    목록 맨 아래에 붙는다(rev_7dqskh 650~810초). 붉은 원을 찾아 안의 숫자를 읽는다 → [(y, 숫자 글)] (hourglass_cells 와 같은 꼴)."""
+    H, W = f.shape[:2]
+    He = max(H, W * 9 / 16)
+    S = 3
+    y0 = int(0.03 * H)
+    c = cv2.resize(f[y0:int(0.92 * H), 0:int(0.2 * W)], None, fx=S, fy=S, interpolation=cv2.INTER_CUBIC)
+    g = cv2.GaussianBlur(cv2.cvtColor(c, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    r0, r1 = int(0.0105 * He * S), int(0.0165 * He * S)
+    cs = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1, minDist=r0 * 2, param1=100, param2=18, minRadius=r0, maxRadius=r1)
+    out = []
+    if cs is None:
+        return out
+    yy, xx = np.ogrid[:c.shape[0], :c.shape[1]]
+    for x, y, r in cs[0]:
+        x, y, r = int(x), int(y), int(r)
+        if x - r < 0 or y - r < 0 or x + r >= c.shape[1] or y + r >= c.shape[0] or (y0 + y / S) < 0.45 * H:
+            continue
+        d = (yy - y) ** 2 + (xx - x) ** 2
+        px = c[(d <= (0.8 * r) ** 2) & (d >= (0.45 * r) ** 2)].astype(int)
+        red = ((px[:, 2] > 110) & (px[:, 2] - px[:, 1] > 50) & (px[:, 2] - px[:, 0] > 40)).mean()
+        if red < 0.6:
+            continue
+        t = c[y - r:y + r, x - r:x + r]
+        big = cv2.resize(t, None, fx=48 / t.shape[0], fy=48 / t.shape[0], interpolation=cv2.INTER_CUBIC)
+        gm = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
+        mid = big[:, int(0.2 * big.shape[1]):int(0.8 * big.shape[1])]
+        votes = []
+        for v in (mid, cv2.cvtColor(255 - gm, cv2.COLOR_GRAY2BGR)[:, int(0.2 * big.shape[1]):int(0.8 * big.shape[1])], cv2.cvtColor(cv2.equalizeHist(gm), cv2.COLOR_GRAY2BGR)):
+            n = rec_digit(v)
+            if n is not None:
+                votes.append(n)
+        if votes:
+            out.append((int((y0 + y / S)), str(max(set(votes), key=votes.count))))
+    return sorted(out)
+
+
 def scan_cycles(rev, vid=0, mode='moc', start=0.0):
     """MoC · PF 의 쓴 사이클 수. 영상 처음(start)부터 쇼케이스 전까지 1초에 한 장씩 모래시계 칸을 읽는다.
     → {'value': 쓴 사이클, 'reads': [(t, 값)], 'first', 'last', 'note'}"""
@@ -386,7 +424,7 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0):
             end = min(late)
     reads = []
     for t, f in tabs.frames(video, start, end - start, 1, W, H):
-        cs = hourglass_cells(f)
+        cs = hourglass_cells(f) or hourglass_badge(f)
         if not cs:
             continue
         v = cs[0][1]               # 가장 앞(위) 칸
