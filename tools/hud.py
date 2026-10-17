@@ -222,19 +222,20 @@ def read_plight_slide(f, geom):
     return None
 
 
-def scan(rev, vid=0, model='chinese', mode='aa', plight=False):
+def scan(rev, vid=0, model='chinese', mode='aa', plight=False, start=0.0, end=None):
     d = os.path.join(ROOT, rev)
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8')) if os.path.exists(os.path.join(d, 'videos.json')) else [{'file': 'video0.mp4'}]
     video = os.path.join(d, vids[vid].get('file', f'video{vid}.mp4'))
     dur, W, H = tabs.probe(video)
-    end = dur
+    explicit_end = end is not None
+    end = min(dur, end) if explicit_end else dur
     tl = os.path.join(d, f'tabs{vid}', 'timeline.txt')
-    if os.path.exists(tl):
+    if not explicit_end and os.path.exists(tl):
         ws = [float(m.group(1)) for m in re.finditer(r'window ([\d.]+)-', open(tl, encoding='utf8').read())]
         late = [w for w in ws if w > 0.3 * dur]
         if late:
             end = min(late)
-    start = max(0.0, end - 200)
+    start = max(start, end - 200)
     st = {'geom': None, 'last_pl': None}
 
     def pass_a(a, b):
@@ -408,16 +409,17 @@ def hourglass_badge(f):
     return sorted(out)
 
 
-def scan_cycles(rev, vid=0, mode='moc', start=0.0):
+def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
     """MoC · PF 의 쓴 사이클 수. 영상 처음(start)부터 쇼케이스 전까지 1초에 한 장씩 모래시계 칸을 읽는다.
     → {'value': 쓴 사이클, 'reads': [(t, 값)], 'first', 'last', 'note'}"""
     d = os.path.join(ROOT, rev)
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8')) if os.path.exists(os.path.join(d, 'videos.json')) else [{'file': 'video0.mp4'}]
     video = os.path.join(d, vids[vid].get('file', f'video{vid}.mp4'))
     dur, W, H = tabs.probe(video)
-    end = dur
+    explicit_end = end is not None
+    end = min(dur, end) if explicit_end else dur
     tl = os.path.join(d, f'tabs{vid}', 'timeline.txt')
-    if os.path.exists(tl):
+    if not explicit_end and os.path.exists(tl):
         ws = [float(m.group(1)) for m in re.finditer(r'window ([\d.]+)-', open(tl, encoding='utf8').read())]
         late = [w for w in ws if w > 0.3 * dur]
         if late:
@@ -455,7 +457,7 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0):
     # 화면 아래로 밀려 끝까지 안 보인다(rev_7dqskh 646초에 「⧗1」로 끊기고 전투는 820초까지) → 끝 값을 모르는 것
     last_t = reads[-1][0]
     seen = None
-    for t, f in tabs.frames(video, last_t + 5, max(1, end - last_t - 5), 0.2, W, H):
+    for t, f in tabs.frames(video, min(end, last_t + 5), max(0, end - last_t - 5), 0.2, W, H):
         c = f[0:int(0.2 * H), 0:int(0.16 * W)]
         if any(re.search(r'\b[1-5]\s*/\s*[1-5]\b', b[4]) for b in ocr(c, 'chinese')):
             seen = round(t, 1)

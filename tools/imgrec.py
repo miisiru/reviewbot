@@ -13,7 +13,9 @@ import cv2
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-IMG = os.path.join(HERE, '..', 'data', 'img')
+sys.path.insert(0, HERE)
+from paths import DATA, EXCEL      # noqa: E402
+IMG = os.path.join(DATA, 'img')
 _sift = None
 _lc = None
 
@@ -146,8 +148,8 @@ def avatar_library():
     global _av
     if _av is None:
         _av = {}
-        paths = glob.glob(os.path.join(IMG, 'avatarroundicon', '*.webp')) + glob.glob(os.path.join(HERE, '..', 'data', 'avatarroundicon', '*.webp'))
-        paths += glob.glob(os.path.join(HERE, '..', 'data', 'avatarroundicon_skin', '*.png'))
+        paths = glob.glob(os.path.join(IMG, 'avatarroundicon', '*.webp')) + glob.glob(os.path.join(DATA, 'avatarroundicon', '*.webp'))
+        paths += glob.glob(os.path.join(DATA, 'avatarroundicon_skin', '*.png'))
         for p in paths:
             n = os.path.basename(p).split('.')[0]
             skin = os.path.basename(os.path.dirname(p)) == 'avatarroundicon_skin'
@@ -289,7 +291,7 @@ _hl = None
 def _headline():
     global _hl
     if _hl is None:
-        _hl = cv2.imread(os.path.join(IMG, '..', 'ui', 'HeadLine.png'), cv2.IMREAD_UNCHANGED)[..., 3]
+        _hl = cv2.imread(os.path.join(DATA, 'ui', 'HeadLine.png'), cv2.IMREAD_UNCHANGED)[..., 3]
     return _hl
 
 
@@ -376,7 +378,7 @@ def path_library():
     global _pathlib
     if _pathlib is None:
         _pathlib = {}
-        for p in glob.glob(os.path.join(IMG, '..', 'ui', 'path', '*_small.png')):
+        for p in glob.glob(os.path.join(DATA, 'ui', 'path', '*_small.png')):
             im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
             _pathlib[os.path.basename(p).split('_')[0]] = cv2.cvtColor((im[..., :3] * (im[..., 3:4] / 255.0)).astype(np.uint8), cv2.COLOR_BGR2GRAY)
     return _pathlib
@@ -451,7 +453,7 @@ def element_library():
         _elem = {}
         for n in ELEMENTS:
             for kind in ('color', 'dtype'):          # 물리는 IconNatureColor 가 없어 IconDamageType 로
-                p = os.path.join(IMG, '..', 'ui', 'element', f'{n}_{kind}.png')
+                p = os.path.join(DATA, 'ui', 'element', f'{n}_{kind}.png')
                 if os.path.exists(p):
                     im = cv2.imread(p, cv2.IMREAD_UNCHANGED)
                     _elem[n] = cv2.cvtColor((im[..., :3] * (im[..., 3:4] / 255.0)).astype(np.uint8), cv2.COLOR_BGR2GRAY)
@@ -516,7 +518,7 @@ def rank_icons():
     global _rank
     if _rank is None:
         _rank = {}
-        fp = os.path.join(HERE, '..', 'data', 'ExcelOutput', 'AvatarRankConfig.json')
+        fp = os.path.join(EXCEL, 'AvatarRankConfig.json')
         for r in json.load(open(fp, encoding='utf8')):
             cid, rk = r['RankID'] // 100, r['Rank']
             fn = os.path.basename(r.get('IconPath') or '').rsplit('.', 1)[0]

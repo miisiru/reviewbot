@@ -1,0 +1,176 @@
+{
+  "TextMapCHS": {
+    "battle_start": "战斗开始",
+    "your_turn": "我方行动中",
+    "enemy_turn": "敌方行动中",
+    "battle_over": "结束战斗"
+  },
+  "TextMapCHT": {
+    "battle_start": "戰鬥開始",
+    "your_turn": "我方行動中",
+    "enemy_turn": "敵方行動中",
+    "battle_over": "結束戰鬥"
+  },
+  "TextMapDE": {
+    "battle_start": "Kampf beginnt",
+    "your_turn": "Du bist am Zug",
+    "enemy_turn": "Gegner ist am Zug",
+    "battle_over": "Kampf endet"
+  },
+  "TextMapEN": {
+    "battle_start": "Battle Start",
+    "your_turn": "Your Turn",
+    "enemy_turn": "Enemy's Turn",
+    "battle_over": "Battle Over"
+  },
+  "TextMapES": {
+    "battle_start": "¡Comienza la batalla!",
+    "your_turn": "Tu turno",
+    "enemy_turn": "Turno enemigo",
+    "battle_over": "Fin de la batalla"
+  },
+  "TextMapFR": {
+    "battle_start": "Début du combat",
+    "your_turn": "Votre tour",
+    "enemy_turn": "Tour de l'ennemi",
+    "battle_over": "Combat terminé"
+  },
+  "TextMapID": {
+    "battle_start": "Pertempuran Dimulai",
+    "your_turn": "Giliran Timmu",
+    "enemy_turn": "Giliran Musuh",
+    "battle_over": "Pertempuran Berakhir"
+  },
+  "TextMapJP": {
+    "battle_start": "戦闘開始",
+    "your_turn": "味方のターン",
+    "enemy_turn": "敵のターン",
+    "battle_over": "戦闘終了"
+  },
+  "TextMapKR_0": {
+    "battle_start": "전투 시작",
+    "your_turn": "아군 행동 중",
+    "enemy_turn": "적 행동 중",
+    "battle_over": "전투 종료"
+  },
+  "TextMapKR_1": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainCHS": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainCHT": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainDE": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainEN": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainES": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainFR": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainID": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainJP": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainKR": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainPT": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainRU": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainTH": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapMainVI": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapPT": {
+    "battle_start": "Início da Batalha",
+    "your_turn": "Sua Vez",
+    "enemy_turn": "Vez do Inimigo",
+    "battle_over": "Fim da Batalha"
+  },
+  "TextMapRU_0": {
+    "battle_start": "В бой!",
+    "your_turn": "Ваш ход",
+    "enemy_turn": "Ход противника",
+    "battle_over": "Бой окончен"
+  },
+  "TextMapRU_1": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapTH_0": {
+    "battle_start": "เริ่มการต่อสู้",
+    "your_turn": "แอ็กชันของฝ่ายคุณ",
+    "enemy_turn": "แอ็กชันของฝ่ายศัตรู",
+    "battle_over": "สิ้นสุดการต่อสู้"
+  },
+  "TextMapTH_1": {
+    "battle_start": null,
+    "your_turn": null,
+    "enemy_turn": null,
+    "battle_over": null
+  },
+  "TextMapVI": {
+    "battle_start": "Bắt Đầu",
+    "your_turn": "Phe Ta",
+    "enemy_turn": "Phe Địch",
+    "battle_over": "Kết Thúc"
+  }
+}

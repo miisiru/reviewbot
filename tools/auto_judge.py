@@ -33,7 +33,7 @@ UNREAD = {'decode_error', 'superimp_unread', 'eidolon_unread', 'hud_unread', 'ui
 STOP_LOOP = {'superimp_unread', 'eidolon_unread'}
 
 
-def read_uid(rev, frames):
+def read_uid(rev, frames, selection=None):
     for fr in frames[:4]:
         p = os.path.join(ROOT, rev, f"tabs{fr['vid']}", f"{fr['t']:07.2f}_{fr['tab']}.jpg")
         if not os.path.exists(p):
@@ -50,12 +50,15 @@ def read_uid(rev, frames):
     if not os.path.exists(vids_p):
         return None
     votes = {}
-    for v in json.load(open(vids_p, encoding='utf8')):
+    for vi, v in enumerate(json.load(open(vids_p, encoding='utf8'))):
+        if selection and vi != selection['battle_index']:
+            continue
         video = os.path.join(ROOT, rev, v['file'])
         if not os.path.exists(video):
             continue
         dur, W, H = tabs.probe(video)
-        for t, f in tabs.frames(video, 0, dur, 12 / max(dur, 1), W, H):
+        a, z = selection['battle'] if selection else (0, dur)
+        for t, f in tabs.frames(video, a, z - a, 12 / max(z - a, 1), W, H):
             c = cv2.resize(f[int(0.9 * H):H, 0:int(0.3 * W)], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             txt = ''.join(b[4] for b in ocr(c, 'chinese')).replace(' ', '')
             m = re.search(r'UID\D{0,2}(\d{9,10})', txt, re.I) or re.search(r'(\d{9,10})', txt)
@@ -68,13 +71,14 @@ def read_uid(rev, frames):
     return None
 
 
-def hud_model(rev, default):
+def hud_model(rev, default, vid=0, interval=None):
     """전투 HUD 오른쪽 위 라벨이 13개 언어 사전(CYCLES · RAV)과 가장 잘 맞는 OCR 모델. 영상 곳곳 6장."""
     d = os.path.join(ROOT, rev)
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
-    video = os.path.join(d, vids[0]['file'])
+    video = os.path.join(d, vids[vid]['file'])
     dur, W, H = tabs.probe(video)
-    fr = [f for _, f in tabs.frames(video, 0, dur, 6 / max(dur, 1), W, H)][:6]
+    a, z = interval or (0, dur)
+    fr = [f for _, f in tabs.frames(video, a, z - a, 6 / max(z - a, 1), W, H)][:6]
     scores = {}
     for m in judge.MODELS:
         tot = 0.0
@@ -192,6 +196,19 @@ def run(rev, do_gp=True, reuse=False):
     out = {'rev': rev, 'run': (rj.get('run_ids') or [None])[0], 'problems': [], 'checks': [], 'deductions': [], 'notes': [],
            'check_reasons': []}   # 문제는 아니지만 사람이 꼭 봐야 하는 것(있으면 CHECK)
 
+    selection_path = os.path.join(d, 'segment_selection.json')
+    selection = json.load(open(selection_path, encoding='utf8')) if os.path.exists(selection_path) else None
+    run_vid = selection['battle_index'] if selection else next((k for k, v in enumerate(vids) if v.get('run_part')), 0)
+    battle_interval = selection['battle'] if selection else None
+    battle_kwargs = dict(start=battle_interval[0], end=battle_interval[1]) if selection else {}
+    if selection:
+        out['segments'] = selection
+        out['timestamp_info'] = selection.get('timestamp_info')
+        out['check_reasons'].extend(selection['check_reasons'])
+        if cache.get('segment_selection') != selection:
+            cache = {}
+        cache['segment_selection'] = selection
+
     out['problem_items'] = []   # 거절 사유를 영상 언어로 쓰기 위한 구조(reasons.py)
 
     def prob(text, kind, **kw):
@@ -224,26 +241,114 @@ def run(rev, do_gp=True, reuse=False):
     # 1) 빌드
     import ocr as ocr_mod
     ocr_mod.set_gpu(os.environ.get('OCR_GPU', '1') != '0')     # 빌드(큰 화면)만 GPU, 나머지는 CPU
-    b = judge.judge(rev)
+    build_indices = {
+        index for index, video in enumerate(vids)
+        if video.get('role') == 'showcase'
+    }
+    separate_showcase = bool(build_indices)
+    if selection:
+        build_indices = {selection['build_index']}
+        separate_showcase = True
+
+    if not build_indices:
+        build_indices = {
+            index for index, video in enumerate(vids)
+            if video.get('run_part')
+        } or {0}
+
+    def has_showcase(indices):
+        for index in indices:
+            timeline = os.path.join(d, f'tabs{index}', 'timeline.txt')
+            if not os.path.exists(timeline):
+                continue
+
+            if any(
+                tab in ('Details', 'LightCone', 'Eidolon')
+                for _, _, tab in judge.segs_of(rev, index)
+            ):
+                return True
+
+        return False
+
+    # Judge each part separately; never pool their build frames.
+    if selection:
+        from segment_pipeline import bounded_frames
+        limits = {os.path.join(d, vids[selection['build_index']]['file']): selection['build']}
+        with bounded_frames(tabs, limits):
+            b = judge.judge(rev, build_indices=build_indices)
+    else:
+        b = judge.judge(rev, build_indices=build_indices)
+
+    if not separate_showcase and not has_showcase(build_indices):
+        candidates = []
+
+        for index in range(len(vids)):
+            if index in build_indices or not has_showcase({index}):
+                continue
+
+            candidate = judge.judge(rev, build_indices={index})
+            chars = candidate.get('chars', [])
+
+            if chars and all(
+                char.get('lc_seen') is not None
+                and (char.get('lc_match') or 0) >= 0.9
+                for char in chars
+            ):
+                candidates.append((index, candidate))
+
+        if len(candidates) == 1:
+            index, b = candidates[0]
+            out['check_reasons'].append(
+                f'No showcase detected in the linked part; '
+                f'a matching build candidate was found in video{index}. '
+                f'Confirm it belongs to this battle.'
+            )
+        else:
+            out['check_reasons'].append(
+                'No showcase detected in the linked part; '
+                + (
+                    'multiple other parts have matching build candidates.'
+                    if candidates
+                    else 'no unique matching showcase was found.'
+                )
+            )
+
+        # Candidate scans also write judge.json; restore the chosen result.
+        json.dump(
+            b,
+            open(os.path.join(d, 'judge.json'), 'w', encoding='utf8'),
+            ensure_ascii=False,
+            indent=1,
+            default=str,
+        )
     ocr_mod.set_gpu(False)
     model = b['ocr_model']
+    language = b.get('language_selection', {})
+
+    if language.get('uncertain'):
+        out['check_reasons'].append(
+            'OCR language selection uncertain: '
+            + '; '.join(language.get('reasons') or ['manual verification required'])
+            + (f"; continued using legacy selection ({language.get('selected_model', model)})"
+               if language.get('fallback') == 'legacy' else '')
+        )
     if not any(f['tab'] == 'LightCone' for f in b['frames']):
         # 광추 화면이 하나도 없으면(성혼 머리글만으로 고른 언어는 틀리기 쉽다: rev_zmad8t 중국어 영상이 latin 으로) 또는 광추 · 성혼 화면이 하나도 없으면 judge 가 언어를 못 골라 중국어로 남는다(rev_1pjotys: 한국어 영상, 메뉴 없음)
         # → 전투 화면 오른쪽 위 HUD 라벨(소모 라운드 · 남은 행동값)을 모델마다 읽어 가장 잘 맞는 모델
-        model = hud_model(rev, model)
+        model = hud_model(rev, model, run_vid, battle_interval)
     lc_found = sum(1 for c in b['chars'] if c.get('lc_seen') is not None)
     # 메뉴 구간은 찾았는데(디테일 · 유물 · 성혼 등) 광추 탭이 한 번도 안 열렸으면 「못 읽음」이 아니라 「안 보여 줌」이다
     # (rev_s4it7k: 넷 다 광추 탭을 안 염 → 거절이 맞다). 메뉴를 못 찾았거나 광추 화면이 있는데 누구 것인지 못 정한 때만 애매
     segs = []
     vids_p = os.path.join(ROOT, rev, 'videos.json')
-    for vi in range(len(json.load(open(vids_p, encoding='utf8'))) if os.path.exists(vids_p) else 1):
+    for vi in b['build_indices']:
         if os.path.exists(os.path.join(ROOT, rev, f'tabs{vi}', 'timeline.txt')):
             segs += judge.segs_of(rev, vi)
     lc_never_opened = bool(segs) and not any(k == 'LightCone' for _, _, k in segs)
     # 메뉴 구간이 하나도 없고 영상이 끝까지 재생되며 결과 화면(도전 성공 · 전투 종료)이 보이면 빌드를 안 보여 준 것이다
     # (사용자, 2026-10-09: rev_6quic9 — 전투 뒤 결과 화면으로 끝나고 캐릭터 화면이 없다 → 거절)
     menu_never_shown = False
-    if not segs and not any(w.startswith('video file') for _, w in out['deductions']):
+    if not selection and not segs and not any(w.startswith('video file') for _, w in out['deductions']):
         rt = result_seen(rev, model)
         if rt is not None:
             menu_never_shown = True
@@ -281,10 +386,17 @@ def run(rev, do_gp=True, reuse=False):
                 ded('id_inferred', f'{name}: identified by {how}')
         if c.get('lc_seen') is None:
             prob(f'{name} Light Cone Superimposition not shown', 'lc_not_shown', char=name)
+            if selection:
+                # 쇼케이스 구간을 영상에서 찾아 자른 것이라, 그 구간 밖에 있는 화면일 수도 있다 → 사람이 한 번 더
+                out['check_reasons'].append(
+                    f'{name}: LC page not found in the selected showcase; verify the showcase interval'
+                )
             if lc_found < len(b['chars']) - 1 and not lc_never_opened and not menu_never_shown:
                 ded('not_shown_uncertain', f'{name}: Light Cone page not found (other pages also missing)')
         else:
-            if c['lc_match'] < 0.7 and not c.get('lc_title_found', True):
+            if c.get('lc_uncertain'):
+                out['check_reasons'].append(f'{name}: Light Cone name uncertain after extra sampling')
+            elif c['lc_match'] < 0.7 and not c.get('lc_title_found', True):
                 # 광추 제목이 한 줄도 안 읽혔다 → 안 맞는 게 아니라 못 읽은 것(사용자, 2026-10-09: rev_1sqwwaj)
                 ded('superimp_unread', f"{name}: Light Cone title unreadable")
             elif c['lc_match'] < 0.7 and not seen_is_lc_name(c['lc_seen']):
@@ -300,6 +412,8 @@ def run(rev, do_gp=True, reuse=False):
                 ded('lc_name_fuzzy', f"{name}: Light Cone name match {c['lc_match']}")
             if not sub['lc']:
                 pass          # 광추를 안 낀 제출(영상도 「미장착」): 중첩은 뜻이 없어 보지 않는다
+            elif c.get('s_uncertain'):
+                out['check_reasons'].append(f'{name}: Superimposition uncertain after extra sampling')
             elif c.get('s_seen') is None:
                 ded('superimp_unread', f'{name}: Superimposition unreadable')
             elif c['s_seen'] != sub['s']:
@@ -307,6 +421,15 @@ def run(rev, do_gp=True, reuse=False):
                      sub=sub['s'], video=c['s_seen'])
         if c.get('e_t') is None:
             prob(f'{name} Eidolons not shown', 'eidolon_not_shown', char=name)
+            if selection:
+                out['check_reasons'].append(
+                    f'{name}: Eidolons not found in the selected showcase; verify the showcase interval'
+                )
+        elif c.get('e_uncertain'):
+            out['check_reasons'].append(
+                f'{name}: Eidolons uncertain — '
+                + '; '.join(c.get('e_uncertainty_reasons') or ['unstable lock evidence'])
+            )
         elif c.get('e_seen') is None:
             ded('eidolon_unread', f'{name}: Eidolons unreadable')
         else:
@@ -320,11 +443,11 @@ def run(rev, do_gp=True, reuse=False):
             if c.get('e_alt') is not None:
                 ded('eidolon_gray', f"{name}: {uncertain_eidolons(c)} uncertain (locked or not)", abs(c['e_seen'] - c['e_alt']))
             # 빨간 「!」(활성화 가능, 아직 안 켬)는 활성화 안 한 것으로 세고 감점하지 않는다(사용자, 2026-10-09: 정상 상태)
-    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t')}
+    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t', 'e_uncertain', 'e_uncertainty_reasons', 'e_candidates', 'e_retry', 'lc_uncertain', 's_uncertain', 'lc_retry')}
                     for c in b['chars']]
     tm('build')
     # 2) UID
-    uid = read_uid(rev, b['frames'])
+    uid = read_uid(rev, b['frames'], selection)
     out['uid'] = uid
     if not uid:     # UID 를 못 읽으면 감점이 아니라 바로 CHECK(사용자, 2026-10-15) — 화면이 없어도 UID 를 확인 못 한 것은 같다
         ded('uid_missing', 'UID not readable')
@@ -332,15 +455,14 @@ def run(rev, do_gp=True, reuse=False):
     # 3) 전투 HUD
     mode = s0.get('mode')
     plight = 'Plight' in (s0.get('boss_name') or '')
-    run_vid = next((k for k, v in enumerate(vids) if v.get('run_part')), 0)
     cyc_mode = mode in ('moc', 'pf')      # 혼돈의 기억 · 허구 이야기: 오른쪽 위 「소모 라운드」가 없고 행동 순서의 모래시계 칸으로 센다
     if 'hud' not in cache:
-        cache['hud'] = {} if cyc_mode else hud.scan(rev, run_vid, model=model, plight=plight)['final']
+        cache['hud'] = {} if cyc_mode else hud.scan(rev, run_vid, model=model, plight=plight, **battle_kwargs)['final']
         if not cyc_mode and not plight and not cache['hud'].get('rav') and not (cache['hud'].get('cycles') or {}).get('frames'):
             # 광추 이름은 영어인데 UI 는 태국어인 영상 등: 고른 모델로 HUD 라벨이 안 읽히면 HUD 글로 모델을 다시 골라 한 번 더(rev_jwrt4a)
-            m2 = hud_model(rev, model)
+            m2 = hud_model(rev, model, run_vid, battle_interval)
             if m2 != model:
-                cache['hud'] = hud.scan(rev, run_vid, model=m2, plight=plight)['final']
+                cache['hud'] = hud.scan(rev, run_vid, model=m2, plight=plight, **battle_kwargs)['final']
     fin = cache['hud']
     out['hud'] = fin
     # 모드 불일치(사용자, 2026-10-09): 전투 HUD 오른쪽 위가 이상 중재면 「소모 라운드」, 종말의 환영이면 「남은 행동값」.
@@ -381,7 +503,10 @@ def run(rev, do_gp=True, reuse=False):
         pf_ambiguous = False
         if cyc_mode:
             if 'cycles_hg' not in cache:
-                r = hud.scan_cycles(rev, run_vid, mode=mode, start=float(tstart(s0.get('video_url'))))
+                r = hud.scan_cycles(rev, run_vid, mode=mode, end=battle_interval[1] if selection else None, start=(battle_interval[0] if selection else
+                                                                    0.0 if s0.get('local_battle_video')
+                                                                    else float(tstart(s0.get('video_url')))
+                                                                   ))
                 cache['cycles_hg'] = {k: r.get(k) for k in ('value', 'first', 'last', 'counter', 'note', 'lost_after', 'battle_until', 'banner')} | {'n': len(r['reads'])}
             ch = cache['cycles_hg']
             cyc = ch.get('value')
@@ -425,9 +550,21 @@ def run(rev, do_gp=True, reuse=False):
     # 4) 보유 효과
     flags = {f for f in (s0.get('flags') or '').split(',') if f}
     if do_gp:
-        if 'gp' not in cache:
-            g0 = gp.scan(rev, run_vid, model=model)
-            cache['gp'] = {'seen': g0['seen'], 'hits': g0['hits']}
+        gp_model = s0.get('gp_ocr_model') or s0.get('ocr_model') or model
+        if gp_model not in ('chinese', 'korean', 'latin', 'eslav', 'thai'):
+            raise ValueError(f'Unsupported gp_ocr_model: {gp_model!r}')
+        if ('gp' not in cache
+                or cache['gp'].get('ocr_model') != gp_model
+                or cache['gp'].get('detector_version') != 2):
+            print(f'{rev}: GP OCR model {gp_model}', flush=True)
+            g0 = gp.scan(rev, run_vid, model=gp_model, **battle_kwargs)
+            cache['gp'] = {
+                'seen': g0['seen'], 'hits': g0['hits'],
+                'ocr_model': gp_model, 'detector_version': 2,
+                'frames': g0['frames'], 'end': g0['end'],
+                'ocr_calls': g0['ocr_calls'],
+                'band_crop': g0['band_crop'],
+            }
         g = cache['gp']
         seen = set(g['seen'])
         out['gp'] = {'flags': sorted(flags), 'seen': sorted(seen), 'first': {h['flag']: h['t'] for h in reversed(g['hits'])}}
@@ -442,10 +579,10 @@ def run(rev, do_gp=True, reuse=False):
     tm('gp')
     # 5) 시작 시각(한 런 · 한 영상)
     url = s0.get('video_url')
-    t0 = tstart(url)
+    t0 = battle_interval[0] if selection else (0 if s0.get('local_battle_video') else tstart(url))
     if len(sides) == 1:
         if 'start' not in cache:
-            cache['start'] = (hud.first_cell_time(rev, run_vid, t0, START_WITHIN + 2, model) if mode in ('moc', 'pf')
+            cache['start'] = selection['battle'][0] if selection else (hud.first_cell_time(rev, run_vid, t0, START_WITHIN + 2, model) if mode in ('moc', 'pf')
                               else start_seen(rev, run_vid, t0, model))
         st = cache['start']
         out['start'] = st
@@ -453,9 +590,20 @@ def run(rev, do_gp=True, reuse=False):
             ded('start_unseen', f'battle HUD not seen within {START_WITHIN}s after {t0}s (may still be a lineup screen)')
     tm('start')
     # 쇼케이스 시작
-    first = min((fr['t'] for fr in b['frames'] if fr['vid'] == run_vid), default=None)
+    showcase_vid = next(
+        (index for index, video in enumerate(vids)
+         if video.get('role') == 'showcase'),
+        run_vid
+    )
+    if selection:
+        showcase_vid = selection['build_index']
+    first = min(
+        (fr['t'] for fr in b['frames']
+         if fr['vid'] == showcase_vid),
+        default=None
+    )
     sh = None
-    tl = os.path.join(d, f'tabs{run_vid}', 'timeline.txt')
+    tl = os.path.join(d, f'tabs{showcase_vid}', 'timeline.txt')
     if os.path.exists(tl):
         m = re.search(r'\n\s*([\d.]+)\s+[\d.]+\s+Details', open(tl, encoding='utf8').read())
         sh = float(m.group(1)) if m else first

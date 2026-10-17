@@ -276,7 +276,7 @@ def names_changed(a, b):
     return n
 
 
-def lock_states(f, lay, want_pred=False):
+def lock_states(f, lay, want_pred=False, fine_scales=False):
     """노드 6개마다 자물쇠 점수. 노드를 못 찾으면 None. 노드 둘레 원이 안 잡힌 노드(영상에 박힌 자막 상자 등이
     가렸다: rev_zrakw 4 · 5번)는 그 칸만 None — 자물쇠가 안 보인다고 열림으로 세지 않는다.
     want_pred 면 (점수, 노드 자리)."""
@@ -291,9 +291,20 @@ def lock_states(f, lay, want_pred=False):
     out = []
     for px, py in pred:
         no_circle = min((np.hypot(px - cx, py - cy) for cx, cy in cs), default=1e9) >= 0.4 * sp
-        r = hp(g[int(max(0, py - 0.5 * sp)):int(min(H, py + 0.5 * sp)), int(max(0, px - 0.5 * sp)):int(min(W, px + 0.5 * sp))])
+        x1 = max(0, min(W, int(px - 0.5 * sp)))
+        x2 = max(0, min(W, int(px + 0.5 * sp)))
+        y1 = max(0, min(H, int(py - 0.5 * sp)))
+        y2 = max(0, min(H, int(py + 0.5 * sp)))
+
+        crop = g[y1:y2, x1:x2]
+        if crop.size == 0:
+            out.append(None)
+            continue
+
+        r = hp(crop)
         sc = -1.0
-        for m in (0.85, 1.0, 1.15):
+        scales = (0.85, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15) if fine_scales else (0.85, 1.0, 1.15)
+        for m in scales:
             t = cv2.resize(t0, None, fx=sp / 62.8 * m, fy=sp / 62.8 * m, interpolation=cv2.INTER_AREA)
             if r.shape[0] > t.shape[0] and r.shape[1] > t.shape[1]:
                 sc = max(sc, float(cv2.matchTemplate(r, t, cv2.TM_CCOEFF_NORMED).max()))
@@ -328,6 +339,222 @@ def eidolon_fit(sc, ic=None):
             for k in range(len(sc) + 1)]
     order = sorted(range(len(cost)), key=lambda k: cost[k])
     return order[0], order[1], round(cost[order[1]] - cost[order[0]], 3)
+
+
+GLOW_MIN = 0.15    # 노드 중앙의 금색 비율이 이 이상이면 「활성화할 수 있는 노드」(켜지지 않음). 켜진 노드 · 잠긴 노드는 0.08 이하(682 프레임)
+
+
+def node_glow(img, pred, sp):
+    """노드마다 중앙의 금색(호박색) 비율. 활성화할 수 있는데 아직 안 켠 노드는 아이콘 없이 금색으로 빛난다(rev_1y8zmwt Kafka 노드 1:
+    자물쇠가 없어 열린 노드로 읽히지만 켜지지 않았다 → E0). 켜진 노드는 아이콘, 잠긴 노드는 자물쇠가 보인다."""
+    H, W = img.shape[:2]
+    out = []
+    for x, y in pred:
+        r = 0.33 * sp
+        c = img[int(max(0, y - r)):int(min(H, y + r)), int(max(0, x - r)):int(min(W, x + r))]
+        if c.size == 0:
+            out.append(None)
+            continue
+        hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
+        m = (hsv[..., 0] >= 10) & (hsv[..., 0] <= 32) & (hsv[..., 1] > 110) & (hsv[..., 2] > 140)
+        out.append(round(float(m.mean()), 2))
+    return out
+
+
+def node_marks(img, lay, char_name):
+    """(노드 성혼 아이콘 상관 여섯, 노드 금색 비율 여섯). 못 구하면 (None, None) — 자물쇠 점수만으로 판정한다."""
+    try:
+        if img is None or not lay:
+            return None, None
+        _, pred = lock_states(img, lay, want_pred=True)
+        if pred is None:
+            return None, None
+        glow = node_glow(img, pred, lay[2])
+        ic = None
+        try:
+            import imgrec
+            cids = imgrec.char_ids(en_key(char_name))
+            if cids:
+                ic = imgrec.node_icon_scores(img, pred, lay[2], cids)
+        except Exception:
+            ic = None
+        return ic, glow
+    except Exception:
+        return None, None
+
+
+def node_icons(img, lay, char_name):
+    return node_marks(img, lay, char_name)[0]
+
+
+def ready_node(frame, k):
+    """k 개 열린 것으로 맞춘 프레임에서 마지막 열린 노드(k 번째)가 활성화 가능 상태(금색 빛)인가."""
+    g = frame.get('glow')
+    return bool(g and k and k - 1 < len(g) and g[k - 1] is not None and g[k - 1] >= GLOW_MIN)
+
+
+def eidolon_evidence(frame):
+    """Assess lock evidence without using the submitted Eidolon count. 노드 아이콘 점수(frame['icon_scores'])가 있으면 함께 쓴다."""
+    scores = frame.get('lock_scores') or []
+    fit = eidolon_fit(scores, frame.get('icon_scores')) if len(scores) == 6 else None
+    complete = len(scores) == 6 and all(v is not None for v in scores)
+    # A clearly locked earlier node cannot precede a clearly unlocked later node.
+    conflict = any(
+        a is not None and a >= 0.8 and b is not None and b < 0.5
+        for i, a in enumerate(scores) for b in scores[i + 1:]
+    )
+    count = max(0, fit[0] - int(bool(frame.get('activatable')) or ready_node(frame, fit[0]))) if fit else None
+    clear = complete and not conflict and fit[2] >= FIT_SURE
+    return {'fit': fit, 'count': count, 'complete': complete,
+            'conflict': conflict, 'clear': clear,
+            'frames': frame.get('lock_frames') or 0}
+
+
+def retry_lightcone(video, anchor, frames, chars, char_k, model, W, H):
+    """Read nearby LC pages only after a missing or mismatched initial reading."""
+    import tabs
+    lay = anchor.get('lay')
+    if not lay:
+        return []
+    other = [f['t'] for f in frames if f['vid'] == anchor['vid']
+             and not (f['tab'] == 'LightCone' and f.get('char_k') == char_k)]
+    a = max([max(0, anchor['t'] - 1.5)] + [t + 0.05 for t in other if t < anchor['t']])
+    b = min([anchor['t'] + 1.5] + [t - 0.05 for t in other if t > anchor['t']])
+    if b <= a:
+        return []
+    samples = []
+    for t, image in tabs.frames(video, a, b - a, 6, W, H):
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        if tabs.which_tab(tabs.pale_gold(hsv, lay), tabs.gold_rows(hsv, lay)) != 'LightCone':
+            continue
+        header = header_name(read_lines(header_crop(image, lay), [model])[model])
+        matches = sorted([(max(sim(header, alias) for alias in aliases(c['char'])), i)
+                          for i, c in enumerate(chars)], reverse=True)
+        if not matches or matches[0][1] != char_k or matches[0][0] < 0.9:
+            continue
+        if len(matches) > 1 and matches[0][0] - matches[1][0] < 0.15:
+            continue
+        lines = read_lines(panel_crop(image), [model])[model]
+        texts = [text for _, _, text in lines
+                 if not re.fullmatch(r'[\u3040-\u309f\s・]{1,8}', text)]
+        title_texts = [text for text in texts
+                      if norm(text) not in PATH_WORDS and norm(text) not in guide_words()][:2]
+        title = ' '.join(title_texts)
+        score = lc_score(texts, chars[char_k]) if texts else 0.0
+        superimp, line = superimp_from(lines)
+        samples.append({'t': t, 'title': title, 'score': score,
+                        's': superimp, 's_line': line})
+    return samples
+
+
+def combine_eidolon_frames(candidates):
+    """Combine verified frames, requiring repeated support for every node."""
+    usable = [f for f in candidates if len(f.get('lock_scores') or []) == 6
+              and all(v is not None for v in f['lock_scores'])]
+    if len(usable) < 2:
+        return None, {'reason': 'fewer than two complete identified frames'}
+    badges = {bool(f.get('activatable')) for f in usable}
+    if len(badges) != 1:
+        return None, {'reason': 'activation badge readings disagree'}
+    maximum = [max(f['lock_scores'][i] for f in usable) for i in range(6)]
+    icons = [f.get('icon_scores') for f in usable]
+    mean_icons = ([round(float(np.mean([ic[i] for ic in icons if ic[i] is not None] or [np.nan])), 3) if any(ic[i] is not None for ic in icons) else None
+                   for i in range(6)] if all(icons) else None)
+    mean_icons = [None if v is not None and v != v else v for v in mean_icons] if mean_icons else None
+    glows = [f.get('glow') for f in usable]
+    max_glow = ([max((g[i] or 0) for g in glows) for i in range(6)] if all(glows) else None)
+    fit = eidolon_fit(maximum, mean_icons)
+    support = [sum(f['lock_scores'][i] < 0.5 if i < fit[0]
+                   else f['lock_scores'][i] >= LOCK_MID for f in usable)
+               for i in range(6)]
+    diagnostic = {'scores': maximum, 'node_support': support,
+                  'identified_frames': len(usable), 'fit_margin': fit[2]}
+    merged = dict(max(usable, key=lambda f: f['t']),
+                  lock_scores=maximum, lock_frames=len(usable), locks=6-fit[0], icon_scores=mean_icons, glow=max_glow)
+    evidence = eidolon_evidence(merged)
+    if not evidence['clear'] or min(support) < 2:
+        diagnostic['reason'] = 'combined evidence ambiguous or lacks repeated node support'
+        return None, diagnostic
+    diagnostic.update(reason='combined evidence supported', count=evidence['count'])
+    return merged, diagnostic
+
+
+def retry_eidolon(video, anchor, frames, chars, char_k, model, W, H):
+    """Conditional wider pass; require independently identified, agreeing frames."""
+    import tabs
+    lay = anchor.get('lay')
+    if not lay:
+        return None
+    other = [f['t'] for f in frames if f['vid'] == anchor['vid']
+             and not (f['tab'] == 'Eidolon' and f.get('char_k') == char_k)]
+    a = max([max(0, anchor['t'] - 1.5)] + [t + 0.05 for t in other if t < anchor['t']])
+    b = min([anchor['t'] + 1.5] + [t - 0.05 for t in other if t > anchor['t']])
+    if b <= a:
+        return None
+    debug_dir = os.path.join(os.path.dirname(video), 'retry_frames',
+                             f"eidolon_v{anchor['vid']}_c{char_k}_{anchor['t']:.2f}")
+    os.makedirs(debug_dir, exist_ok=True)
+    votes, records, identified = [], [], []
+    for index, (t, image) in enumerate(tabs.frames(video, a, b - a, 30, W, H)):
+        filename = f'{index:04d}_{t:.3f}.jpg'
+        saved = cv2.imwrite(os.path.join(debug_dir, filename), image)
+        record = {'t': t, 'file': filename if saved else None,
+                  'accepted': False, 'reason': None}
+        records.append(record)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        tab = tabs.which_tab(tabs.pale_gold(hsv, lay), tabs.gold_rows(hsv, lay))
+        record['tab'] = tab
+        if tab != 'Eidolon':
+            record['reason'] = 'Eidolon tab not confirmed'
+            continue
+        who = ei_who(image, lay, chars, model)
+        record['character_matches'] = who
+        if not who or who[0][1] != char_k or who[0][0] < 2:
+            record['reason'] = 'target character not confirmed by Eidolon names'
+            continue
+        if len(who) > 1 and who[1][0] > who[0][0] // 3:
+            record['reason'] = 'character identity ambiguous'
+            continue
+        scores = lock_states(image, lay, fine_scales=True)
+        candidate = dict(anchor, t=t, lock_scores=scores, lock_frames=1,
+                         activatable=red_badge(image, lay))
+        candidate['icon_scores'], candidate['glow'] = node_marks(image, lay, chars[char_k]['char'])
+        identified.append(candidate)
+        ev = eidolon_evidence(candidate)
+        record.update(scores=scores, count=ev['count'],
+                      fit_margin=ev['fit'][2] if ev['fit'] else None,
+                      conflict=ev['conflict'])
+        if ev['clear']:
+            record.update(accepted=True, reason='clear lock evidence')
+            votes.append((candidate, ev))
+        elif ev['conflict']:
+            record['reason'] = 'contradictory lock pattern'
+        elif not ev['complete']:
+            record['reason'] = 'incomplete lock evidence'
+        else:
+            record['reason'] = 'ambiguous lock fit'
+    combined, combined_diagnostic = combine_eidolon_frames(identified)
+    counts = {ev['count'] for _, ev in votes}
+    diagnostic = {'window': [a, b], 'fps': 30, 'sampled_frames': len(records),
+                  'directory': os.path.relpath(debug_dir, os.path.dirname(video)),
+                  'clear_frames': len(votes), 'counts': sorted(counts),
+                  'samples': [{'t': f['t'], 'count': ev['count'],
+                               'scores': f['lock_scores']} for f, ev in votes],
+                  'frames': records, 'combined': combined_diagnostic}
+    with open(os.path.join(debug_dir, 'diagnostics.json'), 'w', encoding='utf8') as handle:
+        json.dump(diagnostic, handle, ensure_ascii=False, indent=2)
+    print(f"Eidolon retry: {len(records)} sampled, {len(votes)} clear; {debug_dir}", flush=True)
+    if combined is not None:
+        combined['e_retry'] = diagnostic
+        return combined
+    if len(votes) < 2 or len(counts) != 1:
+        anchor['e_retry'] = diagnostic
+        return None
+    best, _ = max(votes, key=lambda pair: pair[1]['fit'][2])
+    best['lock_frames'] = len(votes)
+    best['locks'] = 6 - eidolon_fit(best['lock_scores'])[0]
+    best['e_retry'] = diagnostic
+    return best
 
 
 def read_eidolon(video, t_ref, lay, W, H, since=None, until=None, ref_img=None):
@@ -601,7 +828,181 @@ def ei_who(f, lay, chars, model):
     return sorted(out, reverse=True)
 
 
-def judge(rev):
+def legacy_language_model(frames, chars, models):
+    """Original selection: first two LC pages, or first three Eidolon headers."""
+    candidates = [frame for frame in frames if frame['tab'] == 'LightCone'][:2]
+    if not candidates:
+        candidates = [frame for frame in frames
+                      if frame['tab'] == 'Eidolon' and frame['lay']][:3]
+    scores = {}
+    for candidate_model in models:
+        total = 0.0
+        for frame in candidates:
+            image = cv2.imread(frame['path'])
+            if image is None:
+                continue
+            if frame['tab'] == 'LightCone':
+                lines = read_lines(panel_crop(image), [candidate_model])[candidate_model]
+                total += max((best(text, char['lc'])[0]
+                              for _, _, text in lines[:6] for char in chars if char['lc']), default=0)
+            if frame['lay']:
+                lines = read_lines(header_crop(image, frame['lay']), [candidate_model])[candidate_model]
+                total += max((best(header_name(lines), char['char'])[0]
+                              for char in chars), default=0)
+        scores[candidate_model] = total
+    return max(scores, key=scores.get) if candidates else 'chinese', scores
+
+
+def select_language(frames, chars, forced_model=None, rev='language'):
+    models = ('chinese', 'korean', 'latin', 'eslav', 'thai')
+    if forced_model is not None and forced_model not in models:
+        raise ValueError(f'Unsupported ocr_model: {forced_model!r}')
+
+    pool = [fr for fr in frames if fr['tab'] == 'LightCone']
+    if not pool:
+        pool = [fr for fr in frames if fr['tab'] == 'Eidolon' and fr['lay']]
+
+    # Avoid spending all language samples on duplicate frames of one page.
+    distinct = []
+    for fr in sorted(pool, key=lambda fr: (fr['vid'], fr['t'])):
+        if not any(
+            old['vid'] == fr['vid'] and abs(old['t'] - fr['t']) < 2
+            for old in distinct
+        ):
+            distinct.append(fr)
+    count = min(8, len(distinct))
+    cand = [
+        distinct[round(i * (len(distinct) - 1) / max(1, count - 1))]
+        for i in range(count)
+    ]
+
+    model = forced_model or 'chinese'
+    scores = {}
+    script_patterns = {
+        'chinese': r'[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]',
+        'korean': r'[\uac00-\ud7a3]',
+        'latin': r'[A-Za-z\u00c0-\u024f]',
+        'eslav': r'[\u0400-\u052f]',
+        'thai': r'[\u0e00-\u0e7f]',
+    }
+    script_votes = {name: 0 for name in models}
+    if cand and not forced_model:
+        for candidate_model in models:
+            matches = []
+            for fr in cand:
+                image = cv2.imread(fr['path'])
+                if image is None:
+                    continue
+                texts = []
+                if fr['tab'] == 'LightCone':
+                    lines = read_lines(panel_crop(image), [candidate_model])[candidate_model]
+                    texts.extend(text for _, _, text in lines[:6])
+                    matches.append(max(
+                        (best(text, char['lc'])[0]
+                         for text in texts for char in chars if char['lc']),
+                        default=0,
+                    ))
+                if fr['lay']:
+                    lines = read_lines(header_crop(image, fr['lay']), [candidate_model])[candidate_model]
+                    texts.extend(text for _, _, text in lines)
+                    matches.append(max(
+                        (best(header_name(lines), char['char'])[0] for char in chars),
+                        default=0,
+                    ))
+                text = ''.join(texts)
+                letters = sum(character.isalpha() for character in text)
+                script_count = sum(
+                    character.isalpha()
+                    for character in re.findall(
+                        script_patterns[candidate_model], text
+                    )
+                )
+                if script_count >= 12 and script_count / max(1, letters) >= 0.5:
+                    script_votes[candidate_model] += 1
+            # Unrelated teams in shared showcases must not dominate scoring.
+            strongest = sorted(matches, reverse=True)[:4]
+            scores[candidate_model] = sum(strongest) / max(1, len(strongest))
+        raw_scores = dict(scores)
+        script_bonuses = {}
+        for name in models:
+            bonus = (
+                0.20 * script_votes[name] / len(cand)
+                if script_votes[name] >= 3 else 0.0
+            )
+            script_bonuses[name] = bonus
+            scores[name] += bonus
+        model = max(scores, key=scores.get)
+
+    language_selection = {
+        'forced': forced_model,
+        'samples': [{'vid': fr['vid'], 't': fr['t']} for fr in cand],
+        'scores': scores,
+        'script_votes': script_votes,
+        'uncertain': False,
+        'reasons': [],
+    }
+    if scores and not forced_model:
+        ranked = sorted(scores, key=scores.get, reverse=True)
+        margin = scores[ranked[0]] - scores[ranked[1]]
+        language_selection['raw_scores'] = raw_scores
+        language_selection['script_bonuses'] = script_bonuses
+        language_selection['margin'] = margin
+        if margin < 0.08:
+            language_selection['reasons'].append(
+                'OCR language candidates have similar scores'
+            )
+        if scores[model] < 0.45:
+            language_selection['reasons'].append(
+                'OCR language matching evidence is weak'
+            )
+        raw_winner = max(raw_scores, key=raw_scores.get)
+        script_ranked = sorted(script_votes, key=script_votes.get, reverse=True)
+        script_winner = script_ranked[0]
+        strong_script = (
+            script_votes[script_winner] >= 3
+            and script_votes[script_winner] - script_votes[script_ranked[1]] >= 2
+        )
+        if (strong_script and script_winner != raw_winner
+                and raw_scores[raw_winner] - raw_scores[script_winner] > 0.20):
+            language_selection['reasons'].append(
+                f'{script_winner} script evidence conflicts '
+                f'with {raw_winner} name matching'
+            )
+        language_selection['uncertain'] = bool(language_selection['reasons'])
+    if not forced_model and language_selection['uncertain']:
+        preselected = model
+        model, legacy_scores = legacy_language_model(frames, chars, models)
+
+        top_score = max(legacy_scores.values())
+        tied = [
+            name for name, score in legacy_scores.items()
+            if score == top_score
+        ]
+
+        if len(tied) > 1:
+            votes = language_selection.get('script_votes', {})
+            top_votes = max(votes.get(name, 0) for name in tied)
+            winners = [
+                name for name in tied
+                if votes.get(name, 0) == top_votes
+            ]
+
+            if top_votes > 0 and len(winners) == 1:
+                model = winners[0]
+                language_selection['tie_break'] = 'script_votes'
+        language_selection.update(fallback='legacy', preselected_model=preselected,
+                                  selected_model=model, legacy_scores=legacy_scores)
+        print(f'{rev}: WARNING language selection uncertain; '
+              f'continuing with legacy selection ({model})', flush=True)
+    else:
+        language_selection['selected_model'] = model
+    if not cand and not forced_model:
+        language_selection['uncertain'] = True
+        language_selection['reasons'].append('No build-page language samples found')
+    return model, language_selection
+
+
+def judge(rev, build_indices=None):
     path_words()
     d = os.path.join(ROOT, rev)
     rj = json.load(open(os.path.join(d, 'review.json'), encoding='utf8'))
@@ -623,30 +1024,35 @@ def judge(rev):
             if not m:
                 continue
             frames.append({'vid': vi, 't': float(m[1]), 'tab': m[2], 'path': fp, 'lay': lay_at(lays, float(m[1]))})
+    if build_indices is None:
+        build_indices = {
+            index for index, video in enumerate(vids)
+            if video.get('role') == 'showcase'
+        }
+
+        if not build_indices:
+            build_indices = {
+                index for index, video in enumerate(vids)
+                if video.get('run_part')
+            }
+
+        if not build_indices:
+            build_indices = {0}
+
+    build_indices = set(build_indices)
+
+    frames = [
+        frame for frame in frames
+        if frame['vid'] in build_indices
+    ]
     # 언어(모델) 고르기: 광추 패널 제목이 제출 광추 이름과 가장 잘 맞는 모델
     # 언어(모델) 고르기: 광추 화면 두 장의 제목 · 머리글이 제출 이름들과 가장 잘 맞는 모델.
     # 한국어 글은 중국어 모델로 못 읽고, 중국어 모델이 한국어 영상에서도 숫자 · 라틴 글자로 그럴듯하게 맞는 일이 있어
     # 첫 모델에서 멈추지 않고 다섯을 다 견준다
-    model = 'chinese'
-    lcs = [f for f in frames if f['tab'] == 'LightCone'][:2]
-    # 광추 탭을 아예 안 연 영상(rev_s4it7k: 태국어, 넷 다 성혼 · 유물만 봄)은 lcs 가 비어 제목으로 언어를 못 고른다
-    # → 성혼 탭 머리글로 대신 고른다(머리글은 어느 탭에나 있다). 그래도 없으면 중국어로 남고, 아래 HUD · 시작 찾기가
-    # 엉뚱한 언어로 돌아 못 읽는다(사용자, 2026-10-09)
-    cand = lcs or [f for f in frames if f['tab'] == 'Eidolon' and f['lay']][:3]
-    if cand:
-        scores = {}
-        for m in ('chinese', 'korean', 'latin', 'eslav', 'thai'):     # 러시아어 · 태국어 영상도 있다(eslav · thai 모델)
-            tot = 0.0
-            for fr in cand:
-                f = cv2.imread(fr['path'])
-                if fr['tab'] == 'LightCone':
-                    pl = read_lines(panel_crop(f), [m])[m]
-                    tot += max((best(t, c['lc'])[0] for _, _, t in pl[:6] for c in chars if c['lc']), default=0)
-                if fr['lay']:
-                    hl = read_lines(header_crop(f, fr['lay']), [m])[m]
-                    tot += max((best(header_name(hl), c['char'])[0] for c in chars), default=0)
-            scores[m] = tot
-        model = max(scores, key=scores.get)
+    model, language_selection = select_language(
+        frames, chars, forced_model=p.get('ocr_model'), rev=rev
+    )
+    print(f'{rev}: build OCR model {model}', flush=True)
     import imgrec
     ids_en = imgrec.lc_ids()[0]
     char_lc = [ids_en.get(en_key(c['lc'])) if c['lc'] else None for c in chars]
@@ -737,7 +1143,7 @@ def judge(rev):
     # 디테일 화면 큰 이름(오른쪽 위). 머리글이 워터마크에 덮여도 읽힌다. 구간마다 한 장 읽어 둔다
     import tabs
     dets = []
-    for vi in range(len(vids)):
+    for vi in sorted(build_indices):
         p_tl = os.path.join(d, f'tabs{vi}', 'timeline.txt')
         if not os.path.exists(p_tl):
             continue
@@ -1021,6 +1427,40 @@ def judge(rev):
             r['s_seen'] = f0['superimp']
             r['lc_t'] = f0['t']
             r['lc_how'] = f0['how']
+            retry_name = r['lc_match'] < 0.7 or not r['lc_title_found']
+            retry_s = bool(c['lc']) and (r['s_seen'] is None or r['s_seen'] != c['s'])
+            if retry_name or retry_s:
+                print(f"{rev}: {c['char']} LC reading needs extra sampling", flush=True)
+                video = os.path.join(d, vids[f0['vid']].get('file', f"video{f0['vid']}.mp4"))
+                _, W, H = tabs.probe(video)
+                samples = retry_lightcone(video, f0, frames, chars, k, model, W, H)
+                r['lc_retry'] = samples
+                if retry_name:
+                    matching = [sample for sample in samples if sample['score'] >= 0.9]
+                    groups = {}
+                    for sample in samples:
+                        if sample['title'] and not re.search(r'\d|/', sample['title']):
+                            groups.setdefault(norm(sample['title']), []).append(sample)
+                    repeated = [group for group in groups.values() if len(group) >= 2]
+                    stable = max(repeated, key=len) if len(repeated) == 1 else None
+                    if len(matching) >= 2 and not any(sample['score'] < 0.7 for sample in samples if sample['title']):
+                        retry_best = max(matching, key=lambda sample: sample['score'])
+                        r['lc_seen'], r['lc_match'] = retry_best['title'], round(retry_best['score'], 2)
+                        r['lc_title_found'] = True
+                        r['lc_t'] = retry_best['t']
+                    elif stable and all(sample['score'] < 0.7 for sample in stable) and len(groups) == 1:
+                        retry_best = stable[0]
+                        r['lc_seen'], r['lc_match'] = retry_best['title'], round(retry_best['score'], 2)
+                        r['lc_title_found'] = True
+                    else:
+                        r['lc_uncertain'] = True
+                if retry_s:
+                    votes = [sample['s'] for sample in samples if sample['s'] is not None]
+                    if len(votes) >= 2 and len(set(votes)) == 1:
+                        r['s_seen'] = votes[0]
+                    else:
+                        r['s_uncertain'] = True
+
         if eif:
             # 같은 캐릭터로 정해진 성혼 화면이 여럿이면 누구인지 정한 근거가 센 것을 먼저, 같으면 프레임이 많은 것
             # (rev_a19n6r: 「Archer」가 「Acheron」과 0.77 로 붙어 그 뒤 「after LC」 프레임들이 아케론으로 정해졌고, 프레임이 더 많아
@@ -1032,26 +1472,69 @@ def judge(rev):
                 if h.startswith('name') or h.startswith('eidolon names') or h.startswith('lc title') or h.startswith('details'):
                     return 1
                 return 0          # after LC · same header · only one left 따위 추정
-            f0 = max(eif, key=lambda f: (id_strength(f), f.get('lock_frames') or 0))
+            strength = max(id_strength(f) for f in eif)
+            candidates = [f for f in eif if id_strength(f) == strength]
+            for f in candidates:
+                if 'icon_scores' not in f:
+                    f['icon_scores'], f['glow'] = node_marks(cv2.imread(f['path']) if f.get('lay') else None, f.get('lay'), c['char'])
+            evidence = [(f, eidolon_evidence(f)) for f in candidates]
+            f0, selected = max(evidence, key=lambda pair: (
+                pair[1]['clear'], not pair[1]['conflict'],
+                pair[1]['complete'], pair[1]['frames'],
+                pair[1]['fit'][2] if pair[1]['fit'] else -1,
+                pair[0]['t'],
+            ))
+            needs_retry = (
+                not selected['clear'] or selected['frames'] < 2
+                or len({ev['count'] for _, ev in evidence if ev['clear']}) > 1
+            )
+            if needs_retry:
+                print(f"{rev}: {c['char']} Eidolons uncertain; extra sampling", flush=True)
+                video = os.path.join(d, vids[f0['vid']].get('file', f"video{f0['vid']}.mp4"))
+                _, W, H = tabs.probe(video)
+                retry = retry_eidolon(video, f0, frames, chars, k, model, W, H)
+                if retry is not None:
+                    f0, selected = retry, eidolon_evidence(retry)
+                    evidence = [(retry, selected)]
+                r['e_retry'] = f0.get('e_retry')
+            uncertainty = []
+            if selected['conflict']:
+                uncertainty.append('contradictory lock pattern')
+            if not selected['complete']:
+                uncertainty.append('incomplete lock evidence')
+            if selected['fit'] and selected['fit'][2] < FIT_SURE:
+                uncertainty.append('ambiguous lock fit')
+            stable_counts = {
+                ev['count'] for _, ev in evidence
+                if ev['clear'] and ev['frames'] >= 2
+            }
+            if len(stable_counts) > 1:
+                uncertainty.append('stable frames disagree')
+            if selected['frames'] < 2 and selected['count'] != c['e']:
+                uncertainty.append('mismatch supported by only one sampled frame')
+            r['e_uncertain'] = bool(uncertainty)
+            r['e_uncertainty_reasons'] = uncertainty
+            r['e_candidates'] = [
+                {'vid': f['vid'], 't': f['t'], 'count': ev['count'],
+                 'frames': ev['frames'], 'conflict': ev['conflict'],
+                 'clear': ev['clear'], 'scores': f.get('lock_scores')}
+                for f, ev in evidence
+            ]
             act = 1 if f0['activatable'] else 0
             sc = f0.get('lock_scores')
-            ic = None
-            try:
-                import imgrec
-                img = cv2.imread(f0['path']) if f0.get('lay') else None
-                cids = imgrec.char_ids(en_key(c['char']))
-                if img is not None and cids:
-                    _, pred = lock_states(img, f0['lay'], want_pred=True)
-                    if pred is not None:
-                        ic = imgrec.node_icon_scores(img, pred, f0['lay'][2], cids)
-            except Exception:
-                ic = None
+            ic = f0.get('icon_scores')
+            if ic is None and 'icon_scores' not in f0:
+                ic, f0['glow'] = node_marks(cv2.imread(f0['path']) if f0.get('lay') else None, f0.get('lay'), c['char'])
             r['icon_scores'] = ic
+            r['glow'] = f0.get('glow')
             fit = eidolon_fit(sc, ic) if sc and len(sc) == 6 else None
             if fit:
                 f0['locks'] = 6 - fit[0]
+                # 마지막 열린 노드가 금색으로 빛나면 활성화할 수 있는데 안 켠 것: 켜진 수에서 뺀다(빨간 「!」 배지와 같은 뜻, 노드 모양이 직접 근거)
+                if ready_node(f0, fit[0]):
+                    act = 1
             r['locks'] = f0['locks']
-            r['activatable'] = bool(f0['activatable'])
+            r['activatable'] = bool(f0['activatable']) or bool(act)
             r['e_seen'] = None if f0['locks'] is None else max(0, 6 - f0['locks'] - act)
             names_read = max((h for h, kk in (f0.get('ei_who') or []) if kk == k), default=0)
             # 성혼 이름이 다섯 줄 넘게 읽혔으면 화면이 다 그려진 것이다(여는 연출 중이면 이름도 자물쇠도 아직 없다)
@@ -1068,6 +1551,10 @@ def judge(rev):
             r['lock_scores'] = f0.get('lock_scores')
             r['e_t'] = f0['t']
             r['e_how'] = f0['how']
+            if r['e_uncertain']:
+                r['e_seen'] = None
+                r['e_alt'] = None
+                r['e_gray'] = 0
         probs = []
         if not lcf:
             probs.append('Light Cone not shown')
@@ -1090,6 +1577,8 @@ def judge(rev):
         out.append(r)
     res = {'rev': rev, 'ocr_model': model, 'chars': out, 'details': [{k: v for k, v in x.items()} for x in dets],
            'frames': [{k: v for k, v in f.items() if k not in ('path', 'lay', 'details')} for f in frames]}
+    res['build_indices'] = sorted(build_indices)
+    res['language_selection'] = language_selection
     json.dump(res, open(os.path.join(d, 'judge.json'), 'w', encoding='utf8'), ensure_ascii=False, indent=1, default=str)
     return res
 

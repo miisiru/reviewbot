@@ -310,12 +310,14 @@ def _pass1_chunk(args):
     return hits, n
 
 
-def find_windows(video, dur, W, H):
+def find_windows(video, dur, W, H, start=0.0, end=None):
     """1fps 저해상도로 메뉴가 보이는 시각을 찾아 구간(앞뒤 3초 여유)마다 배치(원래 크기 기준)를 낸다."""
     w = PASS1_W
     h = int(round(H * w / W / 2) * 2)
-    k = max(1, min(6, int(dur // 60)))
-    cuts = [int(dur * i / k) for i in range(k)] + [dur]
+    end = dur if end is None else min(end, dur)
+    span = end - start
+    k = max(1, min(6, int(span // 60)))
+    cuts = [start + span * i / k for i in range(k)] + [end]
     jobs = [(video, cuts[i], cuts[i + 1], w, h) for i in range(k)]
     if k == 1:
         res = [_pass1_chunk(jobs[0])]
@@ -336,8 +338,8 @@ def find_windows(video, dur, W, H):
     out = []
     for a, b, lays in wins:
         lay = tuple(float(np.median([l[i] for l in lays])) * k for i in range(3))
-        out.append((max(0, a - 3), b + 3, lay))
-    return out, n / max(1.0, dur)
+        out.append((max(start, a - 3), min(end, b + 3), lay))
+    return out, n / max(1.0, span)
 
 
 def refine(video, a, b, W, H, lay):
@@ -488,6 +490,24 @@ def scan(video, start, dur, W, H, lay, fps=10, static=None):
                 keep[-1] = (t, s[2], f, nm, sc, dn)
             continue
         keep.append((t, s[2], f, nm, sc, dn))
+    # Keep additional samples so a transition frame is not the only evidence.
+    for t, f in frames(video, start, dur, 3, W, H):
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        if not layout_ok(g, lay):
+            continue
+
+        hsv = cv2.cvtColor(f, cv2.COLOR_BGR2HSV)
+        tab = which_tab(pale_gold(hsv, lay), gold_rows(hsv, lay))
+        if tab not in ('LightCone', 'Eidolon'):
+            continue
+
+        if any(k[1] == tab and abs(k[0] - t) < 0.15 for k in keep):
+            continue
+
+        nm = name_mask(f, lay, static)
+        keep.append((t, tab, f.copy(), nm, sharpness(f, lay), None))
+
+    keep.sort(key=lambda k: k[0])
     return [s[:3] for s in merged if s[2]], keep
 
 
@@ -496,15 +516,76 @@ def main():
     vid = sys.argv[2] if len(sys.argv) > 2 else '0'
     d = os.path.join(ROOT, rev)
     video = os.path.join(d, f'video{vid}.mp4')
+    import video_cache
+    from pathlib import Path
+    videos_path = Path(d) / 'videos.json'
+    entries = json.loads(videos_path.read_text(encoding='utf8')) if videos_path.is_file() else []
+    entry = entries[int(vid)] if int(vid) < len(entries) else {}
+    cache = None
+    cache_path = None
+    local_digest = None
+
+    # Cache full-video extraction only.
+    if len(sys.argv) <= 4:
+        cache = video_cache.part_cache(entry)
+
+        if (
+            cache is None
+            and entry.get('role') in ('battle', 'showcase')
+            and not entry.get('url')
+        ):
+            local_digest = video_cache.content_hash(video)
+            cache = video_cache.ROOT / 'local' / local_digest
+
+    if cache is not None:
+        dependencies = (
+            list(Path(HERE).glob('*.py'))
+            + list(Path(HERE).glob('*.png'))
+        )
+
+        extra = f'{FF}|{cv2.__version__}|{np.__version__}'
+
+        if local_digest is not None:
+            # Exclude the filename: identical video0/video1 files
+            # must use the same extraction cache.
+            signature = video_cache.fingerprint(
+                dependencies,
+                extra=f'{extra}|local:{local_digest}',
+            )
+        else:
+            signature = video_cache.fingerprint(
+                [video, *dependencies],
+                extra=extra,
+            )
+
+        cache_path = cache / 'tabs' / signature
+        output = Path(d) / f'tabs{vid}'
+
+        if (cache_path / 'complete.json').is_file():
+            if output.exists():
+                import shutil
+                shutil.rmtree(output)
+
+            if video_cache.restore(cache_path, output):
+                description = (
+                    'local video'
+                    if local_digest is not None
+                    else f"Bilibili part {entry.get('part')}"
+                )
+                print(
+                    f'{rev}: cached showcase frames for {description}',
+                    flush=True,
+                )
+                return
     dur, W, H = probe(video)
     outdir = os.path.join(d, f'tabs{vid}')
     os.makedirs(outdir, exist_ok=True)
     for fn in os.listdir(outdir):
         os.remove(os.path.join(outdir, fn))
-    wins, decoded = find_windows(video, dur, W, H)
-    if len(sys.argv) > 4:
-        a, b = float(sys.argv[3]), float(sys.argv[3]) + float(sys.argv[4])
-        wins = [(max(a, wa), min(b, wb), lay) for wa, wb, lay in wins if wa < b and wb > a]
+    a, b = (float(sys.argv[3]), min(dur, float(sys.argv[3]) + float(sys.argv[4]))) if len(sys.argv) > 4 else (0.0, dur)
+    if not 0 <= a < b <= dur:
+        raise ValueError("Invalid showcase extraction interval")
+    wins, decoded = find_windows(video, dur, W, H, start=a, end=b)
     lines, kept = [], []
     for a, b, lay in wins:
         lay = refine(video, a, b, W, H, lay)
@@ -552,6 +633,8 @@ def main():
         for i, s in enumerate(tiles):
             sheet[(i // cols) * th:(i // cols) * th + s.shape[0], (i % cols) * tw:(i % cols + 1) * tw] = s
         cv2.imwrite(os.path.join(outdir, 'sheet.jpg'), sheet, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    if cache_path is not None and not bad:
+        video_cache.publish(outdir, cache_path)
     print('\n'.join(lines))
     if bad:
         print(f'!!! DECODE ERROR: only {decoded:.0%} of the video decoded - re-download (python prep.py), result is not usable')

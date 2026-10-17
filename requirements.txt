@@ -5,3 +5,5 @@ rapidocr-onnxruntime==1.2.3
 onnxruntime
 imageio-ffmpeg
 yt-dlp
+pillow            # 전투 시트(battle_sheets.py)
+psutil            # 시간 · 메모리 재기(benchmark_*.py, 선택)

@@ -73,14 +73,21 @@ review could be attached safely and cleanly. Most important first.
 Each item goes through these steps:
 
 ```
-prep.py      download (H.264 720p; every part of a multi-part Bilibili video; retry 480p → 1080p if the file is broken)
-tabs.py      find where character screens (left menu) are shown, keep the Light Cone / Eidolon frames per character
+prep.py              download (H.264 720p; every part of a multi-part Bilibili video; retry 480p → 1080p if the file is broken)
+                     (an already downloaded video is shared between submissions: video_cache.py)
+segment_pipeline.py  split the video into battles and showcases (scan_battle_boundaries.py · scan_showcases.py, cached per video),
+                     pick this submission's battle (timestamp) and its showcase → runs/<rev>/segment_selection.json
+battle_sheets.py     contact sheets of the selected battle (first / last page go to the report)
+tabs.py              find where character screens (left menu) are shown inside the selected showcase, keep the Light Cone /
+                     Eidolon frames per character
 auto_judge.py
   ├ judge.py  whose screen it is · Light Cone name · Superimposition · Eidolons (number of locks)
+  │           (picture evidence from imgrec.py; extra sampling when a reading is unsure)
   ├ hud.py    HUD values at the moment the battle ends (Cycles Used / Remaining Action Value / Plight ⧗N | x)
   ├ gp.py     Global Passive trigger banners (Castorice "Sanctuary of Mooncocoon", Silver Wolf LV.999 "McAwolfee 999")
   └ UID · start time · confidence · verdict
 ```
+Without `segment_selection.json` (older runs, or `tabs.py` run by hand) `auto_judge.py` works on the whole video as before.
 
 ### 1-1. Principles
 - **The result screen is not used as evidence.** It can show the best record, which may differ from this run.
@@ -176,8 +183,8 @@ have no separator, so they never match.
 - **UID:** OCR of the bottom-left field on character screens. Unreadable lowers the confidence.
 - **Start time:** the battle HUD must appear within 62 s (1 minute) of the playback start (the link's `t=`), for single-run
   submissions.
-- **Multi-part Bilibili videos:** for videos split into parts (P1 run + P2 settings, etc.), character screens are
-  searched in every part.
+- **Multi-part Bilibili videos:** the part named by the link (`?p=`) is the run. Parts are never mixed: part 2 and part 3 can
+  hold different battles and builds.
 
 ### 1-9. Confidence and verdict
 Confidence = 100 − deductions (`CONF` in `tools/auto_judge.py`). The same video always gives the same value.
@@ -211,10 +218,53 @@ Tested on 24 items that I had judged by eye (20 approved, 4 rejected):
 - Combined runs (several sides):
   - The builds of all sides are checked, but HUD values and the start time only for the first side.
   - Whether each side's boss matches is not checked.
-- The rule that each run needs its own `t=` when one video contains several runs
+- Which battle a link means when one video contains several runs is decided by its `t=` (see 1-12). A link without a
+  timestamp is read as the first battle; when the same video is on other queue items too, it goes to CHECK
 - Apocalyptic Shadow runs where the boss was not killed (score from boss HP ratio)
 - Checking whether the same video is already on the site
 - Telling apart "Light Cone / Eidolons shown only as an external build card"
+
+### 1-12. Video analysis pipeline (segment_pipeline.py)
+A submission is a claim about one battle. A video can hold several battles, resets and showcases, so the engine
+separates **video analysis** (reusable) from **submission judging** (per claim). The full design notes are in
+[REVIEWBOT_ANALYSIS_MIGRATION.md](REVIEWBOT_ANALYSIS_MIGRATION.md); in short:
+- **Shared sources.** The same YouTube video under different URLs is downloaded once; Bilibili parts stay separate
+  (`video_cache.py`, `work/video_cache/`).
+- **Battle boundaries** (`scan_battle_boundaries.py`). The battle HUD (pause icon) is tracked at 2 fps; start and
+  "Battle Over" prompts are read by OCR (13 languages) only where the HUD appears or disappears. An attempt without a
+  recognized end stays *incomplete* and is never closed artificially.
+- **Showcases** (`scan_showcases.py`). Character-menu sections between battles; a shared showcase (one for several
+  battles) is accepted with a CHECK reason.
+- **Battle selection.** A timestamp inside one complete battle selects it; a timestamp before a battle snaps forward up
+  to 90 s. More than one candidate, an offset over 30 s, a skipped incomplete attempt or a timestamp inside a showcase
+  is a CHECK reason (or CHECK).
+- **OCR language** is chosen early from the build pages and passed to the boundary scan; an unsure choice is a CHECK
+  reason.
+- **Every later reader is scoped** to the selected battle (HUD · UID · Global Passive) or showcase (Light Cone ·
+  Eidolons), and unsure Light Cone / Superimposition / Eidolon readings are re-sampled around the same page. If they stay
+  unsure the item is CHECK, never a guessed mismatch.
+- **Long videos.** Up to 20 minutes: normal. 20–60 minutes: only when two distinct queue items point at the same video.
+  An hour or more: CHECK (`video_policy.py`, `work/video_cache/submission_references.json`).
+
+If the pipeline cannot decide (no complete battle, timestamp points nowhere, unsure showcase) the item goes to **CHECK**
+with the reason; nothing is guessed.
+
+### 1-13. Picture evidence (imgrec.py)
+Evidence that does not depend on reading text (watermarks, subtitles and languages do not affect it). The game pictures
+come from `python tools/get_assets.py`.
+- **Light Cone card.** The card picture on the Light Cone page is matched with the game's Light Cone pictures (SIFT +
+  RANSAC; the right one scores 150–230 inliers, others under 10). Characters sharing a Light Cone are paired by
+  Superimposition.
+- **Eidolon node icons.** A lit node shows that character's own Eidolon icon; a locked one shows a lock. The icon
+  correlation (lit 0.64–0.83, locked 0.31–0.51) is combined with the lock templates when the number of lit nodes is fitted.
+- **Selected portrait.** The ring on the selected face in the character list (`HeadLine`) is found and the face inside is
+  matched with the round face icons (skins included). It is read together with the header text, so the ring lagging
+  0.3 s behind it at a character switch is tolerated.
+- **Path icon (header) and element icon (Details tab)** are used only to **verify**: if the path or element shown
+  differs from the one of the character that was read, the item goes to CHECK ("check that the character was read
+  correctly"). They are never used as extra proof of identity.
+- **Hourglass badge.** When the action-order list is so long that it overflows the screen, the hourglass cell shrinks to
+  a small red badge with the counter. `hud.py` reads it, so the Pure Fiction counter can still be followed.
 
 ---
 
@@ -229,7 +279,13 @@ Tested on 24 items that I had judged by eye (20 approved, 4 rejected):
 pip install -r requirements.txt
 # to use the GPU on Windows: pip uninstall onnxruntime && pip install onnxruntime-directml
 python tools/get_models.py          # OCR models (about 125 MB) → auto/models/
+python tools/get_assets.py          # game pictures for imgrec.py (after 2-2) → data/
 ```
+
+`get_assets.py` needs the game data of 2-2 first (it reads `ExcelOutput/AvatarRankConfig.json` for the Eidolon icons). The
+pictures come from the Hugging Face datasets `fffffffff1/assets` (latest) and `fffffffff1/imageassets` (live); files you
+already have are skipped, `--force` downloads again. Without them the picture evidence is simply missing and judging
+falls back to text and lock templates.
 
 ffmpeg comes from `imageio-ffmpeg`. To use another one, set the environment variable `FFMPEG`. For yt-dlp, set `YTDLP`
 (`tools/paths.py`).
@@ -259,6 +315,10 @@ Copy `config.example.json` to `config.json` and fill it in. **This file is never
 | `discord_webhook` | review reports (`tools/notify.py`, `run_queue.py --webhook review`) |
 | `question_webhook` | questions and test results (`tools/ask.py`, `run_queue.py --webhook question`) |
 | `mod_token` · `mod_refresh_token` · `supabase_url` · `supabase_anon_key` | site API (`tools/mod_api.py`) |
+| `legacy_gates` (optional, `true`) | `run_queue.py`: go back to the old rule that a link with a timestamp, or a video that is on several queue items, is always CHECK |
+| `ytdlp_cookies_from_browser` (optional, e.g. `"firefox"`) | `prep.py`: pass `--cookies-from-browser` to yt-dlp (for videos that need a login). The environment variable `YTDLP_COOKIES_BROWSER` does the same |
+
+The environment variable `DISCORD_WEBHOOK_URL` replaces `discord_webhook` (the review webhook only).
 
 ### 2-4. Folders
 ```
@@ -315,11 +375,16 @@ REJECT · 100% confidence
 ID: run_1nl1xos  •  Review ID: rev_…
 ```
 
+Items that skip the analysis and go straight to **CHECK**: combined submissions (several runs in one item), a video that
+is on other queue items while this link has no timestamp, videos over 20 minutes (see 1-12), and videos that could not be
+downloaded. When a report has sheets, the build sheet and the first / last page of the battle are attached.
+
 ### 3-2. Step by step
 ```bash
 python tools/mod_api.py queue                 # → work/queue.json
 HQ_QUEUE=work/queue.json python tools/prep.py rev_abc123
-python tools/tabs.py rev_abc123 0             # once per part (0, 1, …)
+python tools/tabs.py rev_abc123 0             # whole video; or: tabs.py <rev> <part> <start s> <length s>
+                                              # (run_queue.py first writes segment_selection.json with segment_pipeline.prepare())
 python tools/auto_judge.py rev_abc123         # → runs/rev_abc123/auto.json
 python tools/auto_judge.py rev_abc123 --reuse # re-run only the build reading (reuses HUD / Global Passive results from auto_cache.json)
 ```
@@ -347,13 +412,34 @@ directly: `scan_sheet.sh`, `gp_fast.sh`, `overview.sh`, `hdr_strip.sh`, `top_she
 
 ---
 
+### 3-5. Analyzing a local file (without the site)
+`tools/run_local.py` runs the same analysis on a JSON file of submissions instead of the site queue, and can post the
+report to Discord. Videos are given as links or as local MP4 files (`local_battle_video`, `local_showcase_video`).
+```bash
+# fill data/ and config.json first (2-1 to 2-3); see submission.example.json for the fields
+python tools/run_local.py submissions.json --no-webhook          # analyze, print the report
+python tools/run_local.py submissions.json --watch --poll 10     # keep waiting for new entries and post to Discord
+python tools/run_local.py submissions.json --validate-only
+```
+On Windows `startreviews.bat` does the same with the game-data paths set (`data\TurnBasedGameData\...`).
+`start-folder-opener.bat` starts `tools/folder_opener.py`, a small local web server (127.0.0.1 only, a random token in
+`work/folder_opener_token.txt`) that opens a run folder or plays its video from a report link.
+`submissions.json` is your own input and is not committed.
+
 ## 4. Files
 
 | File | What it does |
 |---|---|
 | `tools/paths.py` | paths · finds ffmpeg and yt-dlp (overridable by environment variables) |
 | `tools/mod_api.py` | site moderation API (queue · in-review mark · decision) |
-| `tools/run_queue.py` | several queue items: download → find screens → judge |
+| `tools/run_queue.py` | several queue items: download → split the video → pick battle and showcase → find screens → judge |
+| `tools/run_local.py` | the same for a local JSON file of submissions (3-5) |
+| `tools/segment_pipeline.py` | cached battle / showcase boundaries, battle selection by timestamp, scoped extraction |
+| `tools/scan_battle_boundaries.py` (`_gated`) · `scan_showcases.py` | battle start / end scan (HUD + prompt OCR) · showcase scan |
+| `tools/video_cache.py` · `video_policy.py` | shared downloads and extraction results · long-video admission |
+| `tools/battle_sheets.py` · `report.py` | sheets of the selected battle · the Discord report |
+| `tools/imgrec.py` · `get_assets.py` | picture evidence (1-13) · downloads the game pictures it needs |
+| `tools/folder_opener.py` · `benchmark_*.py` · `test_showcase_builds.py` | local run-folder opener · timing comparisons · showcase test |
 | `tools/prep.py` | download videos (parts · retry other qualities) |
 | `tools/tabs.py` | character-screen sections · Light Cone / Eidolon frames |
 | `tools/judge.py` | whose screen · Light Cone · Superimposition · Eidolons |

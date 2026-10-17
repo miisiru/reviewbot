@@ -61,14 +61,20 @@ access token 은 한 시간쯤 지나면 만료됩니다. `config.json` 에 refr
 한 건은 이 순서로 처리합니다.
 
 ```
-prep.py      영상 받기(H.264 720p, 빌리빌리 여러 파트는 모두, 깨지면 480p → 1080p 로 다시)
-tabs.py      캐릭터 화면(왼쪽 메뉴)이 보이는 구간을 찾고, 광추 · 성혼 탭이 열린 프레임을 캐릭터마다 남김
+prep.py              영상 받기(H.264 720p, 빌리빌리 여러 파트는 모두, 깨지면 480p → 1080p 로 다시)
+                     (받은 영상은 건끼리 나눠 쓴다: video_cache.py)
+segment_pipeline.py  영상을 전투 · 쇼케이스로 나누고(scan_battle_boundaries.py · scan_showcases.py, 영상마다 캐시),
+                     이 건의 전투(타임스탬프)와 쇼케이스를 고른다 → runs/<rev>/segment_selection.json
+battle_sheets.py     고른 전투의 시트(처음 · 끝 쪽 한 장씩이 보고에 붙는다)
+tabs.py              고른 쇼케이스 안에서 캐릭터 화면(왼쪽 메뉴)이 보이는 구간을 찾고, 광추 · 성혼 탭이 열린 프레임을 캐릭터마다 남김
 auto_judge.py
   ├ judge.py  누구 화면인지 · 광추 이름 · 중첩 · 성혼(자물쇠 수)
+  │           (그림 근거는 imgrec.py, 읽은 것이 애매하면 같은 화면을 더 촘촘히 다시 읽는다)
   ├ hud.py    전투가 끝나는 순간의 HUD 값(소모 라운드 / 남은 행동 수치 / 절망 ⧗N | x)
   ├ gp.py     보유 효과 발동 배너(카스토리스 「달의 고치의 비호」, 은랑 LV.999 「999 디펜더」)
   └ UID · 시작 시각 · 신뢰도 · 판정
 ```
+`segment_selection.json` 이 없으면(옛 판, 또는 `tabs.py` 를 손으로 돌린 경우) `auto_judge.py` 는 예전처럼 영상 전체로 판정합니다.
 
 ### 1-1. 원칙
 - **결과 화면은 근거로 쓰지 않습니다.** 결과 화면은 최고 기록을 보여 줄 수 있어 이번 런과 다를 수 있습니다.
@@ -138,7 +144,7 @@ auto_judge.py
 ### 1-8. 그 밖
 - **UID:** 캐릭터 화면 왼쪽 아래 칸 OCR. 못 읽으면 감점.
 - **시작 시각:** 재생 시작(링크의 `t=`) 뒤 1분 안에 전투 HUD 라벨이 보여야 합니다(한 런짜리).
-- **빌리빌리 여러 파트:** P1 실전 + P2 세팅처럼 파트를 나눈 영상은 모든 파트에서 캐릭터 화면을 찾습니다.
+- **빌리빌리 여러 파트:** 링크가 가리키는 파트(`?p=`)가 실전입니다. 파트끼리 섞지 않습니다(2파트와 3파트가 서로 다른 전투 · 빌드일 수 있음).
 
 ### 1-9. 신뢰도와 판정
 신뢰도 = 100 − 감점(`tools/auto_judge.py` 의 `CONF`). 같은 영상이면 언제나 같은 값이 나옵니다.
@@ -168,10 +174,43 @@ auto_judge.py
 ### 1-11. 아직 안 되는 것
 - 허구 이야기(PF) 점수 · 사이클
 - 결합 런(여러 사이드): 빌드는 전부 보지만 HUD 값 · 시작 시각은 첫 사이드만 봄. 사이드마다 보스가 맞는지 확인 안 함
-- 한 영상에 여러 런이 있을 때 런마다 `t=` 가 있어야 하는 규칙
+- 한 영상에 여러 런이 있을 때 링크가 어느 전투인지는 `t=` 로 정합니다(1-12). 타임스탬프가 없으면 첫 전투로 보고, 같은 영상이 다른 건에도 있으면 CHECK 입니다
 - 종말의 환영에서 보스를 못 잡은 경우(보스 HP 비율 점수)
 - 같은 영상이 이미 사이트에 있는지 확인
 - 「광추 · 성혼을 외부 빌드 카드로만 보여 준 경우」 구분
+
+### 1-12. 영상 분석 파이프라인 (segment_pipeline.py)
+제출은 한 전투에 대한 주장이고, 영상 하나에는 전투 · 재시작 · 쇼케이스가 여럿 있을 수 있습니다. 그래서 **영상 분석**(다시 쓸 수
+있음)과 **건 판정**(주장마다)을 나눕니다. 설계 전체는 [REVIEWBOT_ANALYSIS_MIGRATION.md](REVIEWBOT_ANALYSIS_MIGRATION.md)(영어)에
+있고, 요점은 이렇습니다.
+- **영상 나눠 쓰기.** 주소가 달라도 같은 유튜브 영상은 한 번만 받고, 빌리빌리는 파트마다 따로입니다(`video_cache.py`,
+  `work/video_cache/`).
+- **전투 경계**(`scan_battle_boundaries.py`). 전투 HUD(일시정지 아이콘)를 2fps 로 따라가고, 시작 · 「전투 종료」 글은 HUD 가
+  나타나거나 사라지는 곳에서만 OCR(13개 언어)로 읽습니다. 끝을 못 읽은 시도는 *미완*으로 두고 억지로 끝을 만들지 않습니다.
+- **쇼케이스**(`scan_showcases.py`). 전투 사이 캐릭터 메뉴 구간. 여러 전투가 한 쇼케이스를 함께 쓰면(공용) 사람 확인 사유가 붙습니다.
+- **전투 고르기.** 타임스탬프가 완전한 전투 하나 안에 있으면 그 전투, 전투 앞이면 90초 안의 다음 전투로 당겨 잡습니다. 후보가 둘 이상,
+  어긋남 30초 초과, 미완 시도를 건너뜀, 타임스탬프가 쇼케이스 안 — 은 사람 확인 사유(또는 CHECK)입니다.
+- **OCR 언어**는 빌드 화면으로 먼저 골라 경계 찾기에 넘기고, 애매하면 사람 확인 사유가 붙습니다.
+- **이후 읽기는 모두 고른 구간 안에서만.** 전투 구간(HUD · UID · 보유 효과), 쇼케이스 구간(광추 · 성혼). 광추 · 중첩 · 성혼을 애매하게
+  읽으면 같은 화면 둘레를 다시 읽고, 그래도 애매하면 불일치로 짐작하지 않고 CHECK 입니다.
+- **긴 영상.** 20분까지는 보통. 20~60분은 서로 다른 두 건이 같은 영상을 가리킬 때만. 1시간 이상은 CHECK(`video_policy.py`,
+  `work/video_cache/submission_references.json`).
+
+파이프라인이 정하지 못하면(완전한 전투가 없음, 타임스탬프가 아무 데도 안 가리킴, 쇼케이스가 애매함) 까닭을 달아 **CHECK** 로 보내고
+짐작하지 않습니다.
+
+### 1-13. 그림 근거 (imgrec.py)
+글 읽기에 기대지 않는 근거입니다(워터마크 · 자막 · 언어에 영향이 없음). 게임 그림은 `python tools/get_assets.py` 가 받습니다.
+- **광추 카드.** 광추 화면의 카드 그림을 게임의 광추 그림과 맞춥니다(SIFT + RANSAC, 진짜는 맞은 점 150~230, 다른 광추는 10 안쪽).
+  같은 광추를 낀 캐릭터는 중첩으로 짝을 맞춥니다.
+- **성혼 노드 아이콘.** 켜진 노드는 그 캐릭터의 성혼 아이콘을, 잠긴 노드는 자물쇠를 보입니다. 아이콘 상관(켜짐 0.64~0.83, 잠김
+  0.31~0.51)을 자물쇠 템플릿과 합쳐 켜진 노드 수를 고릅니다.
+- **선택된 초상화.** 캐릭터 목록에서 고른 얼굴에만 있는 선택 링(`HeadLine`)을 찾고 링 속 얼굴을 둥근 얼굴 아이콘(스킨 포함)과 맞춥니다.
+  머리글 글자와 함께 읽으므로 캐릭터를 바꿀 때 링이 0.3초 늦는 것도 견딥니다.
+- **길 아이콘(머리글) · 속성 아이콘(상세 탭)** 은 **검증 전용**입니다. 읽은 캐릭터의 길 · 속성과 화면의 아이콘이 확정으로 다르면
+  CHECK 로 보냅니다(「캐릭터를 제대로 읽었는지 확인」). 누구인지를 더 확실히 하는 근거로는 쓰지 않습니다.
+- **모래시계 배지.** 행동 순서 줄이 길어 화면 밑으로 넘치면 모래시계 칸이 카운터가 든 작은 붉은 배지로 줄어듭니다. `hud.py` 가 이를 읽어
+  허구 이야기의 카운터를 끝까지 따라갑니다.
 
 ---
 
@@ -186,7 +225,10 @@ auto_judge.py
 pip install -r requirements.txt
 # Windows 에서 그래픽카드를 쓰려면: pip uninstall onnxruntime && pip install onnxruntime-directml
 python tools/get_models.py          # OCR 모델(약 125MB) → auto/models/
+python tools/get_assets.py          # imgrec.py 가 쓰는 게임 그림(2-2 다음에) → data/
 ```
+
+`get_assets.py` 는 2-2 의 게임 자료가 먼저 있어야 합니다(성혼 아이콘을 `ExcelOutput/AvatarRankConfig.json` 으로 찾음). 그림은 Hugging Face 데이터셋 `fffffffff1/assets`(최신) · `fffffffff1/imageassets`(정식)에서 받고, 이미 있는 파일은 건너뜁니다(`--force` 면 다시). 그림이 없으면 그림 근거만 빠지고 글 · 자물쇠 템플릿으로 판정합니다.
 
 ffmpeg 는 `imageio-ffmpeg` 가 가진 것을 씁니다. 다른 것을 쓰려면 환경 변수 `FFMPEG`, yt-dlp 는 `YTDLP` 로 정합니다
 (`tools/paths.py`).
@@ -215,6 +257,10 @@ node tools/build_eidolon_names.mjs   # → tools/eidolon_names.json
 | `discord_webhook` | 검토 보고(`tools/notify.py`, `run_queue.py --webhook review`) |
 | `question_webhook` | 질문 · 시험 결과(`tools/ask.py`, `run_queue.py --webhook question`) |
 | `mod_token` · `mod_refresh_token` · `supabase_url` · `supabase_anon_key` | 사이트 API(`tools/mod_api.py`) |
+| `legacy_gates`(선택, `true`) | `run_queue.py`: 타임스탬프 링크 · 한 영상에 건이 여럿이면 무조건 CHECK 로 보내던 옛 규칙으로 돌아감 |
+| `ytdlp_cookies_from_browser`(선택, 예: `"firefox"`) | `prep.py`: yt-dlp 에 `--cookies-from-browser` 를 준다(로그인이 필요한 영상). 환경 변수 `YTDLP_COOKIES_BROWSER` 도 같음 |
+
+환경 변수 `DISCORD_WEBHOOK_URL` 은 `discord_webhook`(검토 보고용)만 바꿉니다.
 
 ### 2-4. 폴더
 ```
@@ -270,11 +316,15 @@ REJECT · 100% confidence
 ID: run_1nl1xos  •  Review ID: rev_…
 ```
 
+분석하지 않고 곧바로 **CHECK** 로 보내는 건: 합친 제출(한 건에 런 여럿), 같은 영상이 다른 건에도 있는데 이 링크에 타임스탬프가 없는 것,
+20분 넘는 영상(1-12), 못 받은 영상. 보고에 시트가 있으면 빌드 시트와 전투의 처음 · 끝 쪽 한 장씩이 붙습니다.
+
 ### 3-2. 단계별로
 ```bash
 python tools/mod_api.py queue                 # → work/queue.json
 HQ_QUEUE=work/queue.json python tools/prep.py rev_abc123
-python tools/tabs.py rev_abc123 0             # 파트마다(0, 1, …)
+python tools/tabs.py rev_abc123 0             # 영상 전체, 또는 tabs.py <rev> <파트> <시작 초> <길이 초>
+                                              # (run_queue.py 는 먼저 segment_pipeline.prepare() 로 segment_selection.json 을 쓴다)
 python tools/auto_judge.py rev_abc123         # → runs/rev_abc123/auto.json
 python tools/auto_judge.py rev_abc123 --reuse # 빌드 읽기만 다시(HUD · 보유 효과 결과는 auto_cache.json 재사용)
 ```
@@ -296,13 +346,33 @@ Claude Code 같은 에이전트가 Chrome DevTools 로 검토 페이지를 열�
 
 ---
 
+### 3-5. 로컬 파일 분석 (사이트 없이)
+`tools/run_local.py` 는 사이트 대기열 대신 제출 JSON 파일로 같은 분석을 돌리고 결과를 디스코드로 보낼 수 있습니다. 영상은 링크 또는 로컬
+MP4(`local_battle_video`, `local_showcase_video`)로 줍니다.
+```bash
+# data/ 와 config.json 을 먼저 채운다(2-1 ~ 2-3). 항목은 submission.example.json 참고
+python tools/run_local.py submissions.json --no-webhook          # 분석하고 보고를 찍는다
+python tools/run_local.py submissions.json --watch --poll 10     # 새 항목을 기다리며 디스코드로 보낸다
+python tools/run_local.py submissions.json --validate-only
+```
+윈도우에서는 `startreviews.bat` 가 게임 자료 경로(`data\TurnBasedGameData\...`)를 정해 같은 일을 합니다. `start-folder-opener.bat` 는
+`tools/folder_opener.py`(127.0.0.1 만 받는 작은 웹 서버, 무작위 토큰은 `work/folder_opener_token.txt`)를 띄워 보고의 링크로 실행 폴더를
+열거나 영상을 재생합니다. `submissions.json` 은 각자 입력이라 깃에 올리지 않습니다.
+
 ## 4. 파일
 
 | 파일 | 하는 일 |
 |---|---|
 | `tools/paths.py` | 경로 · ffmpeg · yt-dlp 찾기(환경 변수로 바꿈) |
 | `tools/mod_api.py` | 사이트 검토 API(대기열 · 검토 중 표시 · 결정) |
-| `tools/run_queue.py` | 대기열 여러 건을 받기 → 메뉴 찾기 → 판정 |
+| `tools/run_queue.py` | 대기열 여러 건을 받기 → 영상 나누기 → 전투 · 쇼케이스 고르기 → 메뉴 찾기 → 판정 |
+| `tools/run_local.py` | 같은 일을 로컬 제출 JSON 으로(3-5) |
+| `tools/segment_pipeline.py` | 영상별 전투 · 쇼케이스 경계 캐시, 타임스탬프로 전투 고르기, 고른 구간만 읽기 |
+| `tools/scan_battle_boundaries.py`(`_gated`) · `scan_showcases.py` | 전투 시작 · 끝 찾기(HUD + 글 OCR) · 쇼케이스 찾기 |
+| `tools/video_cache.py` · `video_policy.py` | 받은 영상 · 추출 결과 나눠 쓰기 · 긴 영상 받아 주기 |
+| `tools/battle_sheets.py` · `report.py` | 고른 전투 시트 · 디스코드 보고 |
+| `tools/imgrec.py` · `get_assets.py` | 그림 근거(1-13) · 거기에 필요한 게임 그림 받기 |
+| `tools/folder_opener.py` · `benchmark_*.py` · `test_showcase_builds.py` | 로컬 실행 폴더 열기 · 시간 견주기 · 쇼케이스 시험 |
 | `tools/prep.py` | 영상 받기(파트 · 화질 다시 받기) |
 | `tools/tabs.py` | 캐릭터 화면 구간 · 광추 / 성혼 프레임 |
 | `tools/judge.py` | 누구 화면인지 · 광추 · 중첩 · 성혼 |

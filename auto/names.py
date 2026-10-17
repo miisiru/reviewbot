@@ -39,7 +39,10 @@ def localize(name, lang):
             keys = [k for k, v in en.items() if isinstance(v, str) and clean(v) == m.group(1)]
     out = sorted({clean(T[k]) for k in keys if T.get(k)})
     _cache[key] = out
-    json.dump(_cache, open(CACHE, 'w', encoding='utf8'), ensure_ascii=False)
+    # 여러 프로세스가 동시에 돌 때 반쯤 쓰인 파일을 읽지 않게 임시 파일에 쓰고 바꿔 끼운다
+    tmp = f'{CACHE}.{os.getpid()}.tmp'
+    json.dump(_cache, open(tmp, 'w', encoding='utf8'), ensure_ascii=False)
+    os.replace(tmp, CACHE)
     return out
 
 

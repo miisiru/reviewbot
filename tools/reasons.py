@@ -6,11 +6,10 @@ import os, sys, re, json, difflib
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, '..', 'auto'))
-from paths import ROOT, RUNS   # noqa: E402
+from paths import ROOT, RUNS, EXCEL   # noqa: E402
 import names   # noqa: E402
 
 TM_LANG = {'KR': 'KR', 'EN': 'EN', 'CN': 'CHS', 'JP': 'JP'}
-EXCEL = os.environ.get('HSR_EXCEL') or os.path.join(ROOT, 'data', 'ExcelOutput')
 _tables = {}
 
 

@@ -6,19 +6,21 @@ python prep.py <rev_id> [<rev_id> ...]   (queue.json 에서 payload 를 읽는�
 (file, url, part, parts, run_part: 제출 링크가 가리킨 파트인지, src: 제출 링크)."""
 import sys, json, os, subprocess, re, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from paths import ROOT, RUNS, WORK, YT, FF   # noqa: E402
+from paths import ROOT, RUNS, WORK, YT, FF, config   # noqa: E402
+import video_cache
+import video_policy
+from pathlib import Path
+import shutil
+import tempfile
+# 로그인이 필요한 영상용(선택): 환경 변수 YTDLP_COOKIES_BROWSER 또는 config.json 의 ytdlp_cookies_from_browser (예: "firefox")
+_cookie_browser = os.environ.get("YTDLP_COOKIES_BROWSER") or config().get("ytdlp_cookies_from_browser")
+YT_COOKIES = ["--cookies-from-browser", _cookie_browser] if _cookie_browser else []
 q = {x["id"]: x for x in json.load(open(os.environ.get("HQ_QUEUE") or os.path.join(WORK, "queue.json"), encoding="utf8"))}
 
 def tstart(url):
     m = re.search(r"[?&#]t=(\d+)(?:s)?", url) or re.search(r"[?&]start=(\d+)", url)
     return int(m.group(1)) if m else 0
 
-def sheet(video, out, start=0, dur=None, every=3, cols=5, rows=5, width=480):
-    os.makedirs(out, exist_ok=True)
-    vf = f"fps=1/{every},scale={width}:-1,drawtext=text='%{{pts\\:hms}}':x=5:y=5:fontsize=20:fontcolor=yellow:box=1:boxcolor=black,tile={cols}x{rows}"
-    if start: vf = vf.replace("%{pts\\:hms}", f"%{{pts\\:hms\\:{start}}}")
-    cmd = [FF, "-loglevel", "error", "-ss", str(start)] + (["-t", str(dur)] if dur else []) + ["-i", video, "-vf", vf, "-q:v", "3", "-y", os.path.join(out, "%02d.jpg")]
-    subprocess.run(cmd, stderr=subprocess.DEVNULL)
 
 def resolve(url):
     """b23.tv 같은 짧은 링크는 넘겨주는 주소로 푼다."""
@@ -37,7 +39,7 @@ def bili_parts(url):
         return None
     bv = m.group(1)
     pm = re.search(r"[?&]p=(\d+)", url)
-    p = subprocess.run([YT, "--flat-playlist", "--print", "%(playlist_index)s", f"https://www.bilibili.com/video/{bv}"],
+    p = subprocess.run([YT, *YT_COOKIES, "--flat-playlist", "--print", "%(playlist_index)s", f"https://www.bilibili.com/video/{bv}"],
                        capture_output=True, text=True, encoding="utf8", errors="replace")
     n = len([x for x in p.stdout.split() if x.strip()])
     return bv, int(pm.group(1)) if pm else 1, max(1, n)
@@ -60,7 +62,7 @@ def decoded_ratio(v, expect=None):
 
 
 DL_TIMEOUT = 6 * 60      # 영상 받기 한 번의 최대 시간(yt-dlp 대비책)
-MAX_SECONDS = 20 * 60   # 이보다 긴 영상은 받지 않고 CHECK(사용자, 2026-10-09)
+# Duration admission is shared with the local runner in video_policy.py.
 
 BILI_HOSTS = ["upos-sz-mirrorcosov.bilivideo.com", "upos-sz-mirrorali.bilivideo.com", "upos-sz-mirrorcos.bilivideo.com"]
 
@@ -69,7 +71,7 @@ def bili_fast(u, fmt, v):
     """빌리빌리: 영상 주소만 yt-dlp 로 얻고, 빠른 CDN 서버를 골라 8갈래로 나눠 받는다(bili_dl).
     빌리빌리는 요청마다 미러를 다르게 주는데 어떤 미러(G-Core 오사카 등)는 80KB/s 라 한 건에 수십 분 걸렸다.
     → yt-dlp --print 꼴의 「길이|제목」, 못 받으면 None(그때는 yt-dlp 로 받는다)"""
-    p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "-f", fmt, "--print", "%(duration)s|%(title)s", "--print", "urls", u],
+    p = subprocess.run([YT, *YT_COOKIES, "--js-runtimes", "node", "--no-playlist", "-f", fmt, "--print", "%(duration)s|%(title)s", "--print", "urls", u],
                        capture_output=True, text=True, encoding="utf8", errors="replace")
     lines = [x for x in p.stdout.splitlines() if x.strip()]
     if len(lines) < 2 or not lines[1].startswith("http") or "\n" in lines[1].strip():
@@ -100,7 +102,7 @@ def download(u, v):
             # 빌리빌리 CDN 은 10M 조각 요청에 639바이트 오류 응답만 줘서 재시도로 수십 분을 버린다 → 조각 없이 받으면 수 초
             chunk = [] if "bilibili.com" in u else ["--http-chunk-size", "10M"]
             try:
-                p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
+                p = subprocess.run([YT, *YT_COOKIES, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", *chunk, "-N", "4", "--ffmpeg-location", FF,
                                     "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s", "--no-simulate", u],
                                    capture_output=True, text=True, encoding="utf8", errors="replace", timeout=DL_TIMEOUT)
             except subprocess.TimeoutExpired:
@@ -114,16 +116,16 @@ def download(u, v):
                 if os.path.exists(v):
                     os.remove(v)
                 return log + f"\nERROR: download too slow (gave up after {DL_TIMEOUT // 60} min)\n"
-            log += p.stdout + p.stderr[-1000:]
+            log += p.stdout + (p.stderr or "")[-1000:]
             out = p.stdout
-            if chunk and "403" in p.stderr:
+            if chunk and "403" in (p.stderr or ""):
                 # 유튜브가 조각 요청 도중 403 을 주면 파일이 앞부분만 남는다(rev_1akuol5 17%) → 조각 없이 다시
                 if os.path.exists(v):
                     os.remove(v)
-                p = subprocess.run([YT, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", "-N", "4",
+                p = subprocess.run([YT, *YT_COOKIES, "-q", "--no-progress", "--js-runtimes", "node", "--retries", "50", "--fragment-retries", "50", "-N", "4",
                                     "--ffmpeg-location", FF, "--no-playlist", "-f", fmt, "-o", v, "--print", "%(duration)s|%(title)s",
                                     "--no-simulate", u], capture_output=True, text=True, encoding="utf8", errors="replace")
-                log += "\n(retry without chunks after 403)\n" + p.stdout + p.stderr[-1000:]
+                log += "\n(retry without chunks after 403)\n" + p.stdout + (p.stderr or "")[-1000:]
                 out = p.stdout or out
         if os.path.exists(v):
             dm = re.match(r"\s*([\d.]+)\|", out)
@@ -160,7 +162,16 @@ for rid in sys.argv[1:]:
                 continue
             seen.add(base)
             entries.append({"key": base, "url": base, "part": 1, "parts": 1, "run_part": True, "src": src})
-    # 20분 넘는 영상은 받지 않는다(사용자, 2026-10-09: 시간만 들고 틀리기 쉽다) → too_long.json, run_queue 가 CHECK 로 보낸다
+    for i, e in enumerate(entries):
+        e['file'] = f'video{i}.mp4'
+        cache = video_cache.part_cache(e)
+        video = Path(d) / e['file']
+        if cache is not None and not video.exists():
+            with tempfile.TemporaryDirectory() as temporary:
+                if video_cache.restore(cache / 'download', temporary):
+                    shutil.copy2(Path(temporary) / 'video.mp4', video)
+                    print(f"{rid}: cached video part {e['part']} download", flush=True)
+    # Apply the shared duration policy before downloading or analyzing.
     tl_p = os.path.join(d, "too_long.json")
     long_ = []
     for i, e in enumerate(entries):
@@ -171,12 +182,13 @@ for rid in sys.argv[1:]:
             mm = re.search(r"Duration: (\d+):(\d+):([\d.]+)", o)
             sec = int(mm.group(1)) * 3600 + int(mm.group(2)) * 60 + float(mm.group(3)) if mm else 0
         else:
-            p = subprocess.run([YT, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", e["url"]],
+            p = subprocess.run([YT, *YT_COOKIES, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", e["url"]],
                                capture_output=True, text=True, encoding="utf8", errors="replace")
             m = re.match(r"\s*([\d.]+)", p.stdout)
             sec = float(m.group(1)) if m else 0
-        if sec > MAX_SECONDS:
-            long_.append({"url": e["url"], "seconds": sec})
+        decision = video_policy.duration_decision(sec, video_policy.url_key(e["url"]))
+        if decision:
+            long_.append(dict(decision, url=e["url"], seconds=sec))
     if long_:
         json.dump(long_, open(tl_p, "w", encoding="utf8"), ensure_ascii=False, indent=1)
         json.dump(entries, open(os.path.join(d, "videos.json"), "w", encoding="utf8"), ensure_ascii=False, indent=1)
@@ -191,7 +203,13 @@ for rid in sys.argv[1:]:
             out = download(e["url"], v)
             open(os.path.join(d, f"video{i}.info"), "w", encoding="utf8").write(
                 e["url"] + f"\npart {e['part']}/{e['parts']}" + (" (run part)" if e["run_part"] else "") + "\n" + out)
-        if os.path.exists(v): sheet(v, os.path.join(d, f"sheet{i}"))
+        if os.path.exists(v):
+            cache = video_cache.part_cache(e)
+            if cache is not None and not (cache / 'download' / 'complete.json').is_file():
+                if decoded_ratio(v) >= 0.9:
+                    with tempfile.TemporaryDirectory() as temporary:
+                        shutil.copy2(v, Path(temporary) / 'video.mp4')
+                        video_cache.publish(temporary, cache / 'download')
     json.dump(entries, open(os.path.join(d, "videos.json"), "w", encoding="utf8"), ensure_ascii=False, indent=1)
     ok = all(os.path.exists(os.path.join(d, e["file"])) for e in entries)
     parts = ", ".join(f"{e['file']}=p{e['part']}/{e['parts']}{'*' if e['run_part'] else ''}" for e in entries)

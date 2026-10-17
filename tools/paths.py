@@ -1,6 +1,7 @@
 """경로와 실행 파일. 모든 도구가 여기서 가져간다. 환경 변수로 바꿀 수 있다.
   REVIEWBOT_ROOT  저장소 폴더(기본: 이 파일의 위 폴더)
   HSR_TEXTMAP     게임 TextMap 폴더(기본: <ROOT>/data/TextMap)
+  HSR_EXCEL       게임 ExcelOutput 폴더(기본: <ROOT>/data/ExcelOutput)
   FFMPEG          ffmpeg 실행 파일(기본: imageio-ffmpeg 가 가진 것, 없으면 PATH 의 ffmpeg)
   YTDLP           yt-dlp 실행 파일(기본: PATH 의 yt-dlp, 없으면 사용자 Python Scripts 폴더의 것)"""
 import os, sys, shutil, sysconfig
@@ -9,7 +10,9 @@ ROOT = os.environ.get('REVIEWBOT_ROOT') or os.path.dirname(os.path.dirname(os.pa
 RUNS = os.path.join(ROOT, 'runs')          # 건마다 영상 · 중간 결과 · 판정
 WORK = os.path.join(ROOT, 'work')          # 대기열 파일 등
 CONFIG = os.path.join(ROOT, 'config.json')  # 웹후크 · 토큰(깃에 올리지 않는다)
-TEXTMAP = os.environ.get('HSR_TEXTMAP') or os.path.join(ROOT, 'data', 'TextMap')
+DATA = os.path.join(ROOT, 'data')           # 게임 자료 · 그림(깃에 올리지 않는다: tools/get_assets.py 가 그림을 받는다)
+TEXTMAP = os.environ.get('HSR_TEXTMAP') or os.path.join(DATA, 'TextMap')
+EXCEL = os.environ.get('HSR_EXCEL') or os.path.join(DATA, 'ExcelOutput')
 PY = sys.executable
 
 

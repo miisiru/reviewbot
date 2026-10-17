@@ -30,11 +30,23 @@ def match(text, words):
     n = norm(text)
     if len(n) < 3:
         return 0.0
+
     best = 0.0
+
     for w in words:
-        if w in n or (len(n) >= 4 and n in w):
+        if w in n:
             return 1.0
-        best = max(best, difflib.SequenceMatcher(None, n, w).ratio())
+
+        if (
+            len(n) >= 8
+            and len(n) >= 0.75 * len(w)
+            and n in w
+        ):
+            return 1.0
+
+        score = difflib.SequenceMatcher(None, n, w).ratio()
+        best = max(best, score)
+
     return best
 
 
@@ -59,21 +71,22 @@ def texty(c):
     return float(m.mean())
 
 
-def scan(rev, vid=0, model='chinese', fps=4):
+def scan(rev, vid=0, model='chinese', fps=4, start=0.0, end=None):
     d = os.path.join(ROOT, rev)
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8')) if os.path.exists(os.path.join(d, 'videos.json')) else [{'file': 'video0.mp4'}]
     video = os.path.join(d, vids[vid].get('file', f'video{vid}.mp4'))
     dur, W, H = tabs.probe(video)
-    end = dur
+    explicit_end = end is not None
+    end = min(dur, end) if explicit_end else dur
     tl = os.path.join(d, f'tabs{vid}', 'timeline.txt')
-    if os.path.exists(tl):
+    if not explicit_end and os.path.exists(tl):
         ws = [float(m.group(1)) for m in re.finditer(r'window ([\d.]+)-', open(tl, encoding='utf8').read())]
         late = [w for w in ws if w > 0.3 * dur]
         if late:
             end = min(late)
     hits, nocr, nfr = [], 0, 0
     prev = {}
-    for t, f in tabs.frames(video, 0, end, fps, W, H):
+    for t, f in tabs.frames(video, start, max(0, end - start), fps, W, H):
         nfr += 1
         band = f[int(0.55 * H):int(0.71 * H), int(0.62 * W):int(0.98 * W)]
         top = f[int(0.02 * H):int(0.12 * H), int(0.20 * W):int(0.80 * W)]
@@ -92,8 +105,35 @@ def scan(rev, vid=0, model='chinese', fps=4):
                 continue          # 같은 자리에서 바로 앞에 읽은 것과 거의 같은 그림
             prev[where] = small
             nocr += 1
-            for b in ocr(c, model):
-                txt = b[4]
+            boxes = ocr(c, model)
+            texts = [box[4] for box in boxes]
+
+            if where == 'band':
+                ordered = sorted(boxes, key=lambda box: box[1])
+
+                for upper, lower in zip(ordered, ordered[1:]):
+                    overlap = max(
+                        0,
+                        min(upper[0] + upper[2], lower[0] + lower[2])
+                        - max(upper[0], lower[0]),
+                    )
+                    gap = lower[1] - (upper[1] + upper[3])
+
+                    if (
+                        overlap >= 0.5 * min(upper[2], lower[2])
+                        and -0.25 * max(upper[3], lower[3])
+                        <= gap <= 1.5 * max(upper[3], lower[3])
+                        and min(len(norm(upper[4])), len(norm(lower[4]))) >= 4
+                    ):
+                        joined = upper[4] + ' ' + lower[4]
+
+                        if any(
+                            match(joined, words) >= 0.9
+                            for words in _NB.values()
+                        ):
+                            texts.append(joined)
+
+            for txt in texts:
                 if where == 'band':
                     for flag, words in _NB.items():
                         s = match(txt, words)
@@ -104,7 +144,7 @@ def scan(rev, vid=0, model='chinese', fps=4):
                     if s >= 0.75:
                         hits.append({'t': round(t, 2), 'flag': 'firewall', 'text': txt, 'score': round(s, 2), 'where': 'top'})
     seen = sorted({h['flag'] for h in hits})
-    return {'video': video, 'end': round(end, 1), 'frames': nfr, 'ocr_calls': nocr, 'seen': seen, 'hits': hits[:20]}
+    return {'video': video, 'ocr_model': model, 'band_crop': [0.55, 0.62, 0.71, 0.98], 'start': round(start, 3), 'end': round(end, 1), 'frames': nfr, 'ocr_calls': nocr, 'seen': seen, 'hits': hits[:20]}
 
 
 if __name__ == '__main__':

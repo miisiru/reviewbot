@@ -1,5 +1,5 @@
 # 허용 목록 방식: 여기 적은 것만 올라간다.
-# config.json(웹후크 · 토큰), runs/(영상 · 제출 자료), work/, data/(게임 자료), auto/models/(OCR 모델)는 올리지 않는다.
+# config.json(웹후크 · 토큰), runs/(영상 · 제출 자료), work/, data/(게임 자료), auto/models/(OCR 모델), submissions.json(로컬 입력)은 올리지 않는다.
 /*
 !/.gitignore
 !/.gitattributes
@@ -8,6 +8,12 @@
 !/requirements.txt
 !/config.example.json
 !/reject_templates.md
+!/REVIEWBOT_ANALYSIS_MIGRATION.md
+!/REVIEWBOT_ANALYSIS_MIGRATION.ko.md
+!/battle_prompt_translations.json
+!/submission.example.json
+!/startreviews.bat
+!/start-folder-opener.bat
 !/tools/
 !/auto/
 
@@ -17,6 +23,7 @@
 !/tools/*.mjs
 !/tools/eidolon_names.json
 !/tools/lock_tpl.png
+!/tools/hourglass_tpl.png
 !/tools/menu_icons.png
 /tools/tabs_v*.py
 /tools/tabs_check.py
