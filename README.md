@@ -257,9 +257,6 @@ come from `python tools/get_assets.py`.
   Superimposition.
 - **Eidolon node icons.** A lit node shows that character's own Eidolon icon; a locked one shows a lock. The icon
   correlation (lit 0.64–0.83, locked 0.31–0.51) is combined with the lock templates when the number of lit nodes is fitted.
-- **Selected portrait.** The ring on the selected face in the character list (`HeadLine`) is found and the face inside is
-  matched with the round face icons (skins included). It is read together with the header text, so the ring lagging
-  0.3 s behind it at a character switch is tolerated.
 - **Path icon (header) and element icon (Details tab)** are used only to **verify**: if the path or element shown
   differs from the one of the character that was read, the item goes to CHECK ("check that the character was read
   correctly"). They are never used as extra proof of identity.

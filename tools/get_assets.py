@@ -1,10 +1,7 @@
 """화면 그림으로 알아보는 도구(imgrec.py)가 쓰는 게임 그림을 받는다 → data/
 원본: HF 데이터셋 fffffffff1/assets (최신판, 없으면 fffffffff1/imageassets 정식판)의 PNG. imgrec 가 읽는 꼴로 바꿔 저장한다.
   data/img/lightconemaxfigures/<광추 아이디>.webp      광추 카드 그림
-  data/avatarroundicon/<캐릭터 아이디>.webp            둥근 얼굴 아이콘
-  data/avatarroundicon_skin/<스킨 아이디>.png          스킨 얼굴
   data/img/skillicons/<캐릭터>/SkillIcon_*_Rank*.webp  켜진 성혼 노드 아이콘(AvatarRankConfig 의 IconPath)
-  data/ui/HeadLine.png                                 선택된 초상화 링
   data/ui/path/<길>_small.png                          머리글 운명의 길 아이콘
   data/ui/element/<속성>_color.png · _dtype.png        상세 화면 속성 아이콘
 성혼 아이콘은 data/ExcelOutput/AvatarRankConfig.json 이 있어야 받는다(없으면 건너뛴다).
@@ -101,9 +98,6 @@ def bulk(src_dir, dest_dir, pattern, webp, label, height=None):
 
 def main():
     bulk('spriteoutput/lightconemaxfigures', os.path.join(DATA, 'img', 'lightconemaxfigures'), r'2\d+\.png', True, '광추 카드', 720)
-    bulk('spriteoutput/avatarroundicon/avatar', os.path.join(DATA, 'avatarroundicon'), r'\w+\.png', True, '둥근 얼굴')
-    bulk('spriteoutput/avatarroundicon/avatarskin', os.path.join(DATA, 'avatarroundicon_skin'), r'\d+\.png', False, '스킨 얼굴')
-    get('ui/atlas/atlasroot/common/outline/HeadLine.png', os.path.join(DATA, 'ui', 'HeadLine.png'))
     for p in PATHS:
         get(f'spriteoutput/professioniconsmall/IconProfession{p}Small.png', os.path.join(DATA, 'ui', 'path', f'{p}_small.png'))
     for e in ELEMENTS:

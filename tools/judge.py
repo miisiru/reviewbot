@@ -1296,41 +1296,6 @@ def judge(rev, build_indices=None):
         pick = rest[0] if len(rest) == 1 else (tb[0] if tb and tb[0] in rest else None)
         if pick is not None:
             f2['char_k'], f2['how'] = pick, f2['how'] + ' -> different locks from earlier frame, given to ' + ('the only one left' if len(rest) == 1 else 'Trailblazer')
-    # 선택된 초상화: 프레임마다 링 속 얼굴이 제출한 캐릭터 가운데 누구인지(확정 문턱을 넘은 것만 sel_conf)
-    # 캐릭터를 넘긴 순간에는 머리글 · 노드가 먼저 바뀌고 링은 0.3초쯤 늦게 따라온다(rev_154ykp6 446.7초: 링은 446.7초에도 앞 캐릭터,
-    # 447.0초에 옮겨 감). 링이 이 프레임의 캐릭터와 다르게 나오면 0.45초 뒤 프레임(다음 저장 프레임 앞까지)에서 한 번 더 본다.
-    try:
-        import imgrec, tabs
-        team = [set(imgrec.char_ids(en_key(c['char']))) for c in chars]
-        allids = {}
-        for kk, t in enumerate(team):
-            for i_ in t:
-                allids.setdefault(i_, kk)
-
-        def sel_of(img):
-            sp = imgrec.selected_portrait(img, allids) if img is not None else None
-            if not sp or not sp['ranked']:
-                return None, False
-            return sp['ranked'][0][1], imgrec.selected_confident(sp)
-
-        for fr in frames:
-            fr['sel_k'], fr['sel_conf'] = None, False
-            if not allids or not fr.get('lay'):
-                continue
-            fr['sel_k'], fr['sel_conf'] = sel_of(cv2.imread(fr['path']))
-            k = fr.get('char_k')
-            if k is not None and fr['sel_k'] is not None and fr['sel_k'] != k and fr['sel_conf']:
-                nxt = min((g['t'] for g in frames if g['vid'] == fr['vid'] and g['t'] > fr['t']), default=None)
-                t2 = fr['t'] + 0.45
-                if nxt is None or t2 < nxt - 0.05:
-                    video = os.path.join(d, vids[fr['vid']].get('file', f"video{fr['vid']}.mp4"))
-                    _, W_, H_ = tabs.probe(video)
-                    f2 = next(tabs.frames(video, t2, 0.05, 30, W_, H_), (None, None))[1]
-                    k2, c2 = sel_of(f2)
-                    if k2 == k and c2:
-                        fr['sel_k'], fr['sel_conf'], fr['sel_lag'] = k2, True, True
-    except Exception:
-        pass
     # 머리글의 길 아이콘(모든 언어 화면에 있다). 검증 전용 — 읽은 캐릭터의 길과 아이콘의 길이 다르면 path_conflict(→ auto_judge 가 CHECK).
     # 아이콘은 머리글 글자보다 0.2초쯤 늦게 바뀌므로(rev_1p4qums 207.7초: 글자는 새 캐릭터, 아이콘은 앞 캐릭터) 저장 프레임이 아니라
     # 0.45초 뒤 프레임에서 읽고, 어긋나면 0.9초 뒤에 한 번 더 본다. 둘 다 어긋나야 충돌이다. 뒤 프레임을 볼 수 없으면(다음 저장 프레임이 바로 뒤)
@@ -1394,10 +1359,6 @@ def judge(rev, build_indices=None):
         if fr['tab'] == 'Eidolon' and not how.startswith('eidolon names') and ew and ew[0][1] == k and ew[0][0] >= 2 and \
                 (len(ew) < 2 or ew[1][0] <= ew[0][0] // 3):
             also.append('eidolon names')
-        # 위쪽 가로 · 왼쪽 세로 얼굴 줄에서 고른 얼굴(선택 링): 게임 UI 의 링 모양으로 자리를 찾고 링 속 얼굴을 제출 편성과 대 본다.
-        # 캐릭터를 넘긴 직후 한두 프레임은 머리글이 먼저 바뀌고 링은 늦게 따라와 어긋나 보이므로, 어긋남은 판정에 쓰지 않고 기록만 한다.
-        if fr.get('sel_k') == k and fr.get('sel_conf'):
-            also.append('portrait')
         if also:
             fr['how'] = how + ' + ' + ' + '.join(also)
     # 캐릭터별 결과
