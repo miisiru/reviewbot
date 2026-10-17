@@ -331,7 +331,13 @@ def manifest(video, preferred, payload=None, language_video=None):
     chosen = None
     # A wrong recognition model must not turn a prompt-free result into a
     # confident single-run assumption. Try the other installed models.
-    for model in [preferred] + [m for m in ('latin', 'chinese', 'korean', 'eslav', 'thai') if m != preferred]:
+    # 언어를 확신 있게 골랐거나(빌드 화면 표본으로 uncertain=False) 사람이 모델을 정했으면 그 모델 하나만 쓴다. 완전한 전투가 안 나와도
+    # (글이 영상에 없는 경우: 시작 · 종료 배너가 없는 녹화) 다른 네 모델로 같은 영상을 다시 훑는 데 모델마다 9분씩 쓰기 때문이다(사용자, 2026-10-17).
+    # 언어를 못 골랐을 때만 다른 모델도 시도한다.
+    selection = language.get('selection') or {}
+    confident = bool(selection.get('forced')) or selection.get('uncertain') is False
+    models = [preferred] if confident else [preferred] + [m for m in ('latin', 'chinese', 'korean', 'eslav', 'thai') if m != preferred]
+    for model in models:
         output = directory / model
         boundary_path = output / 'boundaries.json'
         try:

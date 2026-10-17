@@ -233,6 +233,10 @@ separates **video analysis** (reusable) from **submission judging** (per claim).
 - **Battle boundaries** (`scan_battle_boundaries.py`). The battle HUD (pause icon) is tracked at 2 fps; start and
   "Battle Over" prompts are read by OCR (13 languages) only where the HUD appears or disappears. An attempt without a
   recognized end stays *incomplete* and is never closed artificially.
+- **Picture area.** The scanner works on the game picture only: black bars on any side (even one side only), and bars filled
+  with a blurred copy of the picture (found once per video from the persistent row edges) are cut off first, and the HUD
+  is matched at 720p scale (by height on screens narrower than 16:9, by width on wider ones). Everything the OCR looks
+  at (start / end banners, top-right HUD icons) is cut from that picture.
 - **Showcases** (`scan_showcases.py`). Character-menu sections between battles; a shared showcase (one for several
   battles) is accepted with a CHECK reason.
 - **Battle selection.** A timestamp inside one complete battle selects it; a timestamp before a battle snaps forward up

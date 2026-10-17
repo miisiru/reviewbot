@@ -269,12 +269,77 @@ def letterbox_rows(frame):
     return top, bottom
 
 
+_STATIC_BARS = {}     # (높이, 폭) → (top, bottom): 영상에서 한 번 알아낸, 검은색이 아닌 위아래 띠(estimate_static_bars)
+
+
+def side_bars(frame):
+    """왼쪽 · 오른쪽 검은 띠 폭 (left, right). 한쪽에만 있어도 된다(게임 화면이 왼쪽에 붙고 오른쪽이 검은 녹화: 1067x720 + 213)."""
+    h, w = frame.shape[:2]
+    dark_cols = (frame.max(axis=2) <= 28).mean(axis=0) >= .80
+    limit = int(.35 * w)
+    left = right = 0
+    while left < limit and dark_cols[left]:
+        left += 1
+    while right < limit and dark_cols[w - 1 - right]:
+        right += 1
+    least = max(8, int(.02 * w))
+    return (left if left >= least else 0), (right if right >= least else 0)
+
+
+def picture_box(frame):
+    """게임 화면의 영역 (top, bottom, left, right) = 각 가장자리에서 잘라낼 크기. 옆 띠는 한쪽만 있어도 되고,
+    위아래 띠는 검은색이면 그대로, 흐리게 늘린 배경이면 영상에서 미리 알아 둔 값(_STATIC_BARS)을 쓴다."""
+    h, w = frame.shape[:2]
+    left, right = side_bars(frame)
+    top, bottom = letterbox_rows(frame[:, left:w - right])
+    if not (top or bottom):
+        top, bottom = _STATIC_BARS.get((h, w), (0, 0))
+    return top, bottom, left, right
+
+
+def estimate_static_bars(video, width, height, samples=24):
+    """흐리게 늘린 배경으로 채운 위아래 띠(검은색이 아니라 letterbox_rows 가 못 알아본다: 1280x720 안에 2.3:1 화면 + 위아래 78행)를
+    영상 곳곳 프레임의 행 사이 밝기 차이 평균에서 찾는다. 내용 가장자리는 프레임마다 달라 평균에서 사라지고, 띠와 화면의 경계만
+    봉우리로 남는다. 아래 경계를 찾고 위쪽에서 같은 높이 근처에 봉우리가 있어야(위아래 대칭) 띠로 본다. → (top, bottom) 또는 (0, 0)"""
+    import cv2
+    import numpy as np
+    import tabs
+    duration = tabs.probe(str(video))[0]
+    total, count = np.zeros(height - 1), 0
+    for i in range(samples):
+        for _, frame in tabs.frames(str(video), duration * (i + .5) / samples, .4, 2, width, height):
+            g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            total += np.abs(g[1:] - g[:-1]).mean(axis=1)
+            count += 1
+            break
+    if count < 8:
+        return 0, 0
+    profile = total / count
+    middle = float(np.median(profile[int(.25 * height):int(.75 * height)])) or 1.0
+    limit = int(.20 * height)
+    bar = int(np.argmax(profile[::-1][4:limit])) + 5           # 아래 띠 높이
+    if profile[height - 1 - bar] < 3.5 * middle:
+        return 0, 0
+    near = profile[max(4, bar - 3):bar + 4]
+    if near.size == 0 or near.max() < 2.5 * middle:
+        return 0, 0
+    top = max(4, bar - 3) + int(np.argmax(near)) + 1
+    if abs(top - bar) > max(4, int(.02 * height)):
+        return 0, 0
+    # 띠 안은 흐린 배경이라 세부(행 사이 밝기 차이)가 화면보다 훨씬 적다. 화면 내용(HUD 줄 · 글자)이 만든 가짜 경계는 세부가 많다
+    # (잰 값: 흐린 띠 0.1~0.25배, 가짜 0.6~1.9배 — rev_7ypr0m · rev_a19n6r · rev_1p4qums 에서 가짜가 잡혔다)
+    smooth_top = float(np.median(profile[4:top - 3])) / middle if top > 8 else 9.0
+    smooth_bottom = float(np.median(profile[height - 1 - bar + 3:height - 5])) / middle if bar > 8 else 9.0
+    return (top, bar) if max(smooth_top, smooth_bottom) < .45 else (0, 0)
+
+
 def boundary_crop(frame):
     h, w = frame.shape[:2]
-    top, bottom = letterbox_rows(frame)
-    active_h = h - top - bottom
-    return frame[top + int(.08 * active_h):top + int(.26 * active_h),
-                 int(.25 * w):int(.75 * w)]
+    top, bottom, left, right = picture_box(frame)
+    picture = frame[top:h - bottom, left:w - right]
+    active_h, active_w = picture.shape[:2]
+    return picture[int(.08 * active_h):int(.26 * active_h),
+                   int(.25 * active_w):int(.75 * active_w)]
 
 
 def adaptive_ranges(events, start, end):
@@ -322,10 +387,11 @@ def adaptive_ranges(events, start, end):
 HUD_TEMPLATES = {'pause': 'iVBORw0KGgoAAAANSUhEUgAAAA0AAAATCAYAAABLN4eXAAABxElEQVR4nHWTT2sTURTFf+fOy0yppcWgoN0pJCspiH4HKa3gtujXNaItXdZNSHEjxLqzf5KZvHddvMm0ifHCMHDPO/eec+aNdnpDdxfguDtm4J4AB4FkHYYbkhEkkHl7KCEBLmJMAHkICQECUoyElCJv3r5mOHzBr6spn0cj7m5q3IUooHAODl4xGLxkOr3i29k5AeD4+B0nn95zenrO94sLft7+prBASlBVJUdHh5x8/MDXL+dMLn9gJmN3d5tn+0/o9/dQYZgF3AvMDBA7j3Z4vv+U/uM9ClV5EzgP30LQBpDb3qHuECRxX8oEBK6ut16BJcm7gZncbvqXwlLeWvky4K6xApv7/RkzgARKJI84MYtVBBJSfjZsaj806YHstU0b5a2McHJYWa4Q1kn3/7G8A93b+9kZ3xRTV6ugCbFYwPyuoa4XmAXAkbIvF9RNyniTfYZFjIxGZxRmTC7H3NzMQQKPOE7dOKPRKb2yZDye8Of6Gm2HgVdbFVVZEeOMu9mcYCXukeQLUkxUWyW9XsGsaWjmkWAyFvNEPbvF5JjK1oPlnCSaxqnnNTElCisIyytTSO0fK1KE5I6ZYdZGbUXrE/4C/qTVro86lC0AAAAASUVORK5CYII=', 'speed': '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', 'auto': 'iVBORw0KGgoAAAANSUhEUgAAAB4AAAATCAYAAACHrr18AAAEfElEQVR4nIWWXXfaRhCGn1khjE1SBzeNgRgcbA5Jc5rL8gPa/3/SY7dxXTs2IIr8haH+QFhod3ohITtpz8neSOxq5515550ZpFr5VR0WdQmiFnWKCACIAVXFiIAaVDXdF8FggPRcFURARVBVRARI3zX7xvMkv6+qFJxzKIpACuBJ+jsDB0VREJddzAy6JcByCU5tfi5iMm8cnieIPNlHKagqiILARmWD79afc3V1RRRFJEkMPDWeeisIxmRHCkqKIYCqAzGICGI8Xv2wSam0QhiGxPECEYM6S0FEUMAYj2azyYcPPzEKRwTBgNHob+7vI5w6UEmto5ilYRGcc2lg6rL0GIp+EeP5OGvZbe+w/t1zxuMx83mMZMwVEM1iUkprJV5tvqK0WqJer3F5ecXh4SFn52fM7qMU3IEzaTqMeDgBSMGLhSKVjQ1arTdY5zj884Dnz1fZ+L6CMYJzNqVaHYWnNArCfD5nb2+PcrlMo9GgWq0yGo349OmAs/CceLFAJOMXh2cMftFndbVEe7fNzs4Oa+U1jo+PQBTPM7kWliIEeQQWBOMZrLUEQcB0OmU4HPL+x/fU63UqlQpBMOT05JSLiwustYBSfrZKq/WGWq1Go9Hg7u6Og4MDjo4OiaJZbvvLAPkq4ixvAFEUcXx8zOXlJbVajd3dXd69e8vrep1ev0c4ClkpFdnZadFsbhPHMb/v/8FgMGAyvSaKIny/kJfQ1ysH1kyezjmstTiXimA8HnN7e0sYhnQ6Hd6+7dDtdrm5uWVlpYDve5yc9Dg4OCQcnZHYBGddGgQeZPX+WB1peaaqVhAMIh5GPFQlr0tBSBJLFEXc3PxDHD9QLBZ49myNYtEnSRZEUcTd3Q2LxQOLZAEIfsFPo1VBxCCiiLjM7hNxiQjGZEJQzeu1VFqhWq3SbrfZ2qojIuzv7xOGIeVymVarRbvdZv3FOkd/HTEY9JlOp1gnFKX4FcGaP7+gOq9FEXy/QL1ep16vsr3dpFRa5fw8pNfrEQQB83mM53kEQUCr1aJWr9Htdmk2t+j3+5ydXRBF82/nGE3Vp1m01WqNbvdnXryoMJ1O+PjxNwaDQUbpAlWw1hKGIZPJhJeDl3Q6Hdq7OzQaW/T7AScnffyi/w1glq1P8H2ftbU1rFX29vbp9/pcT8YkSZKKDgO4rGsJs9mM4XDI1dWYXu+UTqfDdrPF1us3lEolZrPZf4FTGRmMeCziVCjOOYZBwPX4mtu7O5JFwiKJEQFjsimVNwXFmNTKbBbx+fMpo9EZW1sNOp13bG5uMptFmapTIYNQECQ3MhwOmc/vuZ/d8xDHPMxjrCqKy6eAy3JmxGR6IHcA0vMomtPr9ZhMJlSrdZxN90RM5qhBapVfMh/AeApq857qstng1CFoZjybyf8ztZbgxpg8DX6hiHOQJAtEJOt48lTVYK0DddncdIgUUE3n9HLvcQmP5bEk0qHqUKf5URwnOb3LKeicSxvI8iKYfLamTWSp9McIZdmIdPmS0SzgnM0tPf2T4HneF4yIGP4FUn2Z3IQY6b4AAAAASUVORK5CYII='}
 
 def active_picture(frame):
-    top, bottom = letterbox_rows(frame)
-    if not (top or bottom):
+    h, w = frame.shape[:2]
+    top, bottom, left, right = picture_box(frame)
+    if not (top or bottom or left or right):
         return frame
-    return frame[top:frame.shape[0] - bottom]
+    return frame[top:h - bottom, left:w - right]
 
 
 class BattleHUD:
@@ -350,12 +416,13 @@ class BattleHUD:
                 if template.std() > 0:
                     variants.append(template)
             self.templates[name] = variants
-        # 일시정지 아이콘은 영상마다 크기가 크게 다르다(1280 폭으로 맞춰도 템플릿의 0.5배~1.0배 — 1080p 녹화 · 모바일 · 가로로 넓은 화면).
-        # 위의 0.85~1.15배만으로는 놓치는 영상이 많아(rev_1lqaklu 는 0%) 0.4~1.25배를 따로 훑는다
+        # 일시정지 아이콘은 영상마다 크기가 다르다. 위의 0.85~1.15배만으로는 놓치는 영상이 있어(rev_1lqaklu 는 0%) 0.6~1.25배를 따로 훑는다.
+        # 0.6배보다 작게는 훑지 않는다: 세로 막대 둘 모양이라 필드 화면 오른쪽 위의 신호 막대 아이콘(「ıl 41ms」)이 일시정지로 잡혀
+        # 전투 전 필드 화면이 전투로 판정됐다(rev_yhc6lb 0~2초, 점수 0.86~0.90)
         base = cv2.imdecode(np.frombuffer(base64.b64decode(HUD_TEMPLATES['pause']), np.uint8), 1)
         self.wide_pause = []
-        for step in range(17):
-            template = self.white_mask(cv2.resize(base, None, fx=.40 + .05*step, fy=.40 + .05*step))
+        for step in range(14):
+            template = self.white_mask(cv2.resize(base, None, fx=.60 + .05*step, fy=.60 + .05*step))
             if template.std() > 0:
                 self.wide_pause.append(template)
 
@@ -475,6 +542,8 @@ def run_hud_state(args):
     from paths import FF
     from ocr import OCR
     duration, width, height = tabs.probe(str(args.video))
+    scanner._STATIC_BARS[(height, width)] = scanner.estimate_static_bars(args.video, width, height)
+    print(f'Picture bars (top, bottom): {scanner._STATIC_BARS[(height, width)]}', flush=True)
     finish = min(duration, args.end if args.end is not None else duration)
     if finish <= args.start:
         raise ValueError('end must be after start and within video')
