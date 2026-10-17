@@ -180,6 +180,9 @@ def assemble(events):
             current['waves'].append({'t': event['t'], 'wave': event['wave'], 'total': event['total_waves']})
         elif current is not None:
             current['end'] = event['t']
+            if event.get('end_inferred'):
+                current['end_inferred'] = True
+                current['end_source'] = event.get('source')
             if current['warnings']:
                 current['status'] = 'CHECK'
             segments.append(current)
@@ -532,6 +535,65 @@ def state_frames(ff, video, start, end, fps, width, height):
                 process.wait()
 
 
+_RESULT_LABELS = None
+
+
+def result_labels():
+    """전투 뒤 결과 화면의 글(「도전 성공」 「도전 종료」 「전투 종료」)을 13개 언어 TextMap 에서 모은 것 → {정규화한 글: 'banner' | 'result'}.
+    콘텐츠마다 끝 글이 다르다(종말의 환영: 「Battle Over」 배너 뒤 「Challenge Ended」 결과 화면). TextMap 이 없으면 빈 집합."""
+    global _RESULT_LABELS
+    if _RESULT_LABELS is None:
+        labels = {}
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent/'auto'))
+            from names import localize
+            for english in ('Challenge Completed', 'Challenge Ended', 'Battle Over'):
+                for lang in ('EN', 'KR', 'CHS', 'CHT', 'JP', 'VI', 'TH', 'RU', 'ES', 'PT', 'FR', 'DE', 'ID'):
+                    for text in localize(english, lang) or []:
+                        label = normalize(text)
+                        if len(label) >= 3:
+                            labels.setdefault(label, 'banner' if english == 'Battle Over' else 'result')
+        except Exception as error:
+            print(f'Result-screen labels unavailable: {error}', flush=True)
+        _RESULT_LABELS = labels
+    return _RESULT_LABELS
+
+
+def find_result_screen(engine, video, left, right, width, height, ff, counts=None):
+    """left~right 사이에서 전투 결과 화면이 처음 보이는 프레임. 「Battle Over」 배너를 못 읽었을 때 끝을 되찾는 보조 근거.
+    결과 화면은 전투가 끝나고 몇 초 뒤라 시각이 정확한 끝은 아니다(rev 4ugJcJRY8x4: 배너 359초, 결과 화면 364.5초) → end_inferred.
+    1fps, 화면 가운데(위 5~55%, 가로 20~80%)만 OCR 한다. 범위가 길면 끝쪽 180초만 본다."""
+    labels = result_labels()
+    if not labels or right <= left:
+        return None
+    left = max(left, right - 180)
+    stream = state_frames(ff, video, left, right, 1, width, height)
+    try:
+        for t, frame in stream:
+            picture = active_picture(frame)
+            h, w = picture.shape[:2]
+            crop = picture[int(.05*h):int(.55*h), int(.20*w):int(.80*w)]
+            if counts is not None:
+                counts['ocr_calls'] += 1
+                counts['result_ocr_calls'] = counts.get('result_ocr_calls', 0) + 1
+            for box in engine(crop, scale=2.0 if crop.shape[1] < 800 else 1.0):
+                text = normalize(box[4])
+                if len(text) < 3:
+                    continue
+                best, kind = max(((1.0 if label in text else difflib.SequenceMatcher(None, text, label).ratio()), kind)
+                                 for label, kind in labels.items())
+                if best >= .85:
+                    # 「Battle Over」 배너가 시작 · 종료 찾기의 위쪽 크롭 밖에 있어 놓친 경우는 이 가운데 크롭에서 배너 자체를 읽는다(정확한 끝).
+                    # 「Challenge Ended」 같은 결과 화면 글이면 끝에서 몇 초 뒤라 추정으로 표시한다
+                    return {'kind': 'end', 'wave': None, 'total_waves': None, 'text': box[4], 'score': round(best, 4),
+                            't': round(t, 3), 'last_t': round(t, 3),
+                            'source': 'result_screen' if kind == 'result' else 'center_banner',
+                            **({'end_inferred': True} if kind == 'result' else {})}
+    finally:
+        stream.close()
+    return None
+
+
 def run_hud_state(args):
     started = time.perf_counter()
     scanner = sys.modules[__name__]
@@ -553,7 +615,7 @@ def run_hud_state(args):
     hud = scanner.BattleHUD()
     observations, retries, hud_samples = [], [], []
     counts = {'ocr_calls': 0, 'search_ocr_calls': 0, 'transition_ocr_calls': 0,
-              'fallback_ocr_calls': 0, 'hud_frames': 0, 'decoded_frames': 0}
+              'fallback_ocr_calls': 0, 'result_ocr_calls': 0, 'hud_frames': 0, 'decoded_frames': 0}
     diagnostics = (output/'raw_ocr.jsonl').open('w', encoding='utf8', buffering=1)
 
     def read(t, frame, source):
@@ -693,6 +755,16 @@ def run_hud_state(args):
             if restart:
                 continue
             if battle_start is not None and not args.no_repair:
+                # 끝 배너를 못 읽었으면 먼저 결과 화면 글로 끝을 찾는다(싸다). 없을 때만 남은 구간 전체를 4fps 로 훑는다
+                hit = find_result_screen(engine, args.video, max(battle_start+.5, (last_present or battle_start) - 2), finish,
+                                         width, height, FF, counts)
+                if hit and hit['t'] > battle_start+3:
+                    print(f"Battle end {hit['t']:.2f}s ({hit['source']}: {hit['text']!r})", flush=True)
+                    hit['evidence'] = None
+                    observations.append(hit)
+                    battle_start = None
+                    cursor = hit['t']+.5
+                    continue
                 # Full unresolved interval only if visual transition recovery failed.
                 hit = transition(battle_start+.5, finish, battle_start, 'fallback')
                 if hit:
