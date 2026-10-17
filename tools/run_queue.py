@@ -6,6 +6,8 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --fetch    먼저 mod_api.py queue 로 대기열을 새로 받는다
   --claim    판정 전에 「검토 중」 표시(mod_api.py claim)
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
+  --jobs N        한꺼번에 분석할 건 수(건마다 따로 프로세스, 기본 1)
+  --downloads M   분석 자리를 기다리는 건들의 영상을 미리 받는 수(기본 0 = 분석하면서 받는다). 병렬 예: --jobs 3 --downloads 3
 결과: runs/<rev>/auto.json · auto_log.txt, 요약은 work/results.jsonl 에 한 줄씩
 
 곧바로 CHECK 로 보내는 건(분석하지 않는다): 합친 제출(런 여럿), 같은 영상이 다른 건에도 있는데 이 건 링크에 타임스탬프가 없는 것
@@ -125,16 +127,151 @@ def send(wh, embed, d, rev):
         print('webhook failed:', e)
 
 
+def run_item(rev, item, d):
+    """한 건을 처음부터 끝까지(받기 → 구간 나누기 → 판정). 판정 결과(dict)를 돌려주고 auto.json 에도 쓴다. 판정이 안 되면 None."""
+    os.makedirs(d, exist_ok=True)
+    one = os.path.join(WORK, f'q_{rev}.json')
+    json.dump([item], open(one, 'w', encoding='utf8'), ensure_ascii=False)
+    env = dict(ENV, HQ_QUEUE=one)
+    for name in ('auto.json', 'auto_cache.json', 'segment_selection.json'):
+        Path(d, name).unlink(missing_ok=True)       # 받은 영상은 두고, 지난 판정 · 구간 고르기는 버린다
+    return analyze(rev, item, d, env)
+
+
+def prefetch(rev, item, d):
+    """영상만 미리 받는다(prep.py). 분석 자리가 나기 전에 다음 건들의 영상을 받아 두는 용도 — 받은 영상은 분석 때 그대로 쓴다."""
+    os.makedirs(d, exist_ok=True)
+    one = os.path.join(WORK, f'q_{rev}.json')
+    json.dump([item], open(one, 'w', encoding='utf8'), ensure_ascii=False)
+    r = sh([os.path.join(HERE, 'prep.py'), rev], env=dict(ENV, HQ_QUEUE=one))
+    open(os.path.join(d, 'prefetch.log'), 'w', encoding='utf8').write(r.stdout + r.stderr[-2000:])
+
+
+def finish(rev, item, d, res, secs, wh):
+    """판정이 나온 건을 보고한다(보고 · 기록 · 웹후크는 한 곳에서 차례로 — 병렬이어도 섞이지 않는다)."""
+    if res is None:
+        print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
+        return
+    video_policy.mark_result(item, res)
+    embed = report(rev, res, item)
+    print(as_text(embed), f'\n({secs:.0f}s)\n', flush=True)
+    with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
+        f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
+                            'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '\n')
+    send(wh, embed, d, rev)
+
+
+def source_key(item, rev):
+    """같은 영상을 가리키는 건은 같은 열쇠. 같은 영상은 받기 · 구간 나누기 결과(work/video_cache)를 함께 쓰므로 한 번에 하나만 돌린다."""
+    pl = item.get('payload') or {}
+    return video_key(((pl.get('runs') or [pl])[0]).get('video_url') or '') or rev
+
+
+def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
+    """여러 건을 한꺼번에: 영상 받기(최대 downloads 개)와 분석(최대 jobs 개)이 겹쳐 돈다.
+    분석은 건마다 따로 프로세스(run_queue.py --worker)로 돌려 서로의 전역 상태를 건드리지 않는다.
+    같은 영상을 가리키는 건은 앞 건이 끝난 뒤에 시작한다(같은 캐시를 동시에 쓰지 않게)."""
+    import subprocess as sp
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+    todo = deque()
+    for rev in revs:
+        item = byid[rev]
+        d = os.path.join(RUNS, rev)
+        why = gate_reason(rev, item, q, legacy)
+        if why:                                   # 곧바로 CHECK 인 건은 분석 없이 바로 보고
+            res = write_check(d, rev, item, why)
+            embed = report(rev, res, item)
+            print(as_text(embed), flush=True)
+            send(wh, embed, d, rev)
+        else:
+            todo.append(rev)
+    ex_dl = ThreadPoolExecutor(max(1, downloads))
+    ex_run = ThreadPoolExecutor(max(1, jobs))
+    procs = {}
+    busy = set()                 # 받는 중 · 분석 중인 영상 열쇠
+    dl, run = {}, {}             # future → rev
+    ready = deque()              # 받기가 끝나 분석을 기다리는 건
+
+    def work(rev):
+        t0 = time.time()
+        d = os.path.join(RUNS, rev)
+        if claim:
+            sh([os.path.join(HERE, 'mod_api.py'), 'claim', rev])
+        os.makedirs(d, exist_ok=True)
+        log = open(os.path.join(d, 'worker.log'), 'w', encoding='utf8')
+        p = sp.Popen([PY, '-u', os.path.abspath(__file__), '--worker', rev, '--queue', qf],
+                     stdout=log, stderr=sp.STDOUT, env=ENV)
+        procs[rev] = p
+        p.wait()
+        log.close()
+        ap = os.path.join(d, 'auto.json')
+        res = json.load(open(ap, encoding='utf8')) if p.returncode == 0 and os.path.exists(ap) else None
+        return res, time.time() - t0
+
+    try:
+        while todo or dl or run or ready:
+            # 받기: 자리가 있고 열쇠가 비어 있는 다음 건
+            for rev in list(todo):
+                k = source_key(byid[rev], rev)
+                if k in busy:
+                    continue
+                if downloads > 0:
+                    if len(dl) >= downloads:
+                        break
+                    todo.remove(rev)
+                    busy.add(k)
+                    print(f'{rev}: downloading', flush=True)
+                    dl[ex_dl.submit(prefetch, rev, byid[rev], os.path.join(RUNS, rev))] = rev
+                else:          # 미리 받지 않으면 분석 프로세스가 직접 받는다
+                    todo.remove(rev)
+                    busy.add(k)
+                    ready.append(rev)
+            # 분석: 받기가 끝난 건
+            while ready and len(run) < jobs:
+                rev = ready.popleft()
+                print(f'{rev}: analyzing', flush=True)
+                run[ex_run.submit(work, rev)] = rev
+            pending = set(dl) | set(run)
+            if not pending:
+                continue
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                if fut in dl:
+                    rev = dl.pop(fut)
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        print(f'{rev}: download step failed: {e}', flush=True)
+                    ready.append(rev)
+                else:
+                    rev = run.pop(fut)
+                    res, secs = fut.result()
+                    busy.discard(source_key(byid[rev], rev))
+                    finish(rev, byid[rev], os.path.join(RUNS, rev), res, secs, wh)
+    finally:
+        for p in procs.values():
+            if p.poll() is None:
+                p.terminate()
+        ex_dl.shutdown(wait=False, cancel_futures=True)
+        ex_run.shutdown(wait=False, cancel_futures=True)
+
+
 def main():
     a = sys.argv[1:]
     opt = lambda k, d=None: a[a.index(k) + 1] if k in a else d
     qf = opt('--queue', os.path.join(WORK, 'queue.json'))
+    if '--worker' in a:                          # 병렬 실행이 건마다 띄우는 분석 프로세스: 판정 결과는 runs/<rev>/auto.json
+        rev = opt('--worker')
+        item = next(x for x in json.load(open(qf, encoding='utf8')) if x['id'] == rev)
+        res = run_item(rev, item, os.path.join(RUNS, rev))
+        sys.exit(0 if res is not None else 3)
     if '--fetch' in a:
         print(sh([os.path.join(HERE, 'mod_api.py'), 'queue', '--out', qf]).stdout.strip())
     q = json.load(open(qf, encoding='utf8'))
     legacy = bool(config().get('legacy_gates'))
     registry = video_policy.register_items([x for x in q if isinstance(x.get('payload'), dict)])
-    skip = {opt('--queue'), opt('--limit'), opt('--webhook')}
+    skip = {opt('--queue'), opt('--limit'), opt('--webhook'), opt('--jobs'), opt('--downloads')}
     revs = [x for x in a if not x.startswith('--') and x not in skip]
     if not revs:
         revs = [x['id'] for x in q if not x.get('claimed_by_name')][:int(opt('--limit', '1'))]
@@ -144,6 +281,11 @@ def main():
         revs = ready + revs
     byid = {x['id']: x for x in q}
     os.makedirs(WORK, exist_ok=True)
+    jobs, downloads = int(opt('--jobs', '1')), int(opt('--downloads', '0'))
+    wh = opt('--webhook')
+    if jobs > 1 or downloads > 0:
+        run_parallel(revs, byid, q, legacy, jobs, downloads, '--claim' in a, wh, qf)
+        return
     for rev in revs:
         t0 = time.time()
         item = byid[rev]
@@ -155,26 +297,9 @@ def main():
             res = write_check(d, rev, item, why_skip)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
-            send(opt('--webhook'), embed, d, rev)
+            send(wh, embed, d, rev)
             continue
-        os.makedirs(d, exist_ok=True)
-        one = os.path.join(WORK, f'q_{rev}.json')
-        json.dump([item], open(one, 'w', encoding='utf8'), ensure_ascii=False)
-        env = dict(ENV, HQ_QUEUE=one)
-        for name in ('auto.json', 'auto_cache.json', 'segment_selection.json'):
-            Path(d, name).unlink(missing_ok=True)       # 받은 영상은 두고, 지난 판정 · 구간 고르기는 버린다
-        res = analyze(rev, item, d, env)
-        if res is None:
-            # 판정이 안 됐다 — 이 건만 건너뛰고 다음 건으로(auto_log.txt 에 까닭)
-            print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
-            continue
-        video_policy.mark_result(item, res)
-        embed = report(rev, res, item)
-        print(as_text(embed), f'\n({time.time() - t0:.0f}s)\n')
-        with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
-            f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
-                                'problems': res['problems'], 'seconds': round(time.time() - t0)}, ensure_ascii=False) + '\n')
-        send(opt('--webhook'), embed, d, rev)
+        finish(rev, item, d, run_item(rev, item, d), time.time() - t0, wh)
 
 
 if __name__ == '__main__':

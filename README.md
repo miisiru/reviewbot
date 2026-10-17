@@ -423,6 +423,23 @@ On Windows `startreviews.bat` does the same with the game-data paths set (`data\
 `work/folder_opener_token.txt`) that opens a run folder or plays its video from a report link.
 `submissions.json` is your own input and is not committed.
 
+### 3-6. Reviewing several items at once
+```bash
+python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook review
+```
+- `--downloads M` downloads the videos of items that are waiting for an analysis slot, up to M at a time (`prep.py`; network
+  bound), so the next item is already on disk when an analysis finishes.
+- `--jobs N` analyzes up to N items at the same time. Each item runs in its own process (`run_queue.py --worker <rev>`), so
+  they never touch each other's state. Every worker loads the OCR models and decodes video, so RAM and CPU are the limit
+  (start with 2–3 and watch memory). The build reading uses the GPU by default; set `OCR_GPU=0` if the workers fight over it.
+- Items that point at the same video run one after another (they share the download and the battle / showcase cache in
+  `work/video_cache`).
+- Reports, `work/results.jsonl` and the Discord post are written by the main process one at a time, in the order the
+  analyses finish (not queue order). Per-item logs: `runs/<rev>/worker.log` and `prefetch.log`.
+- Without `--jobs` / `--downloads` the queue is processed one item at a time, as before.
+- `--claim` marks an item "in review" when its analysis starts. The site's mark lasts only a minute and is not renewed
+  here (see section 5).
+
 ## 4. Files
 
 | File | What it does |
@@ -451,7 +468,29 @@ On Windows `startreviews.bat` does the same with the game-data paths set (`data\
 | `auto/names.py` | English game name → TextMap names in each language |
 | `reject_templates.md` | rejection-reason templates per language (written in Korean) |
 
-## 5. Sources and licences
+## 5. Using the bot with several people (needs countermeasures — not done yet)
+Everything above assumes one person on one machine. When several reviewers (or machines) run the bot on the same queue,
+these problems appear. They are listed so that they are handled before it is used that way:
+1. **Double review of the same item.** The site's "in review" mark lasts one minute and `run_queue.py` sets it once. Two runners
+   can pick the same unclaimed item. It needs a renewed claim (a heartbeat while judging) and a check of the claim right
+   before the report is sent, or a shared list of who is working on what.
+2. **Nothing is shared between machines.** `runs/` and `work/video_cache` are local, so every machine downloads and scans the
+   same video again, and the long-video rule ("two distinct submissions point at this video",
+   `work/video_cache/submission_references.json`) only counts what that machine has seen. A shared cache or one central
+   service is needed.
+3. **The registry file has one writer.** `video_policy.py` and the cache publishing assume a single runner on a machine. Several
+   runners on one shared disk need locks (or a database).
+4. **Duplicate and out-of-order reports.** Two runners post the same item twice, and parallel runs post in finishing order.
+   Reports should carry a stable item id and be skipped when one was already posted.
+5. **Credentials.** Each person should use their own moderator token; sharing one session token between people is risky. An API
+   key for bots (section 0-2) would solve it.
+6. **Different versions give different verdicts.** Everybody should run the same commit. The report does not show the commit
+   yet.
+7. **Resources.** Each item keeps 100–300 MB in `runs/` and the caches grow. Define who cleans what, and when.
+8. **Discord limits.** One webhook is rate limited (the sender retries on 429/5xx). Several runners on one channel need one
+   poster or separate channels.
+
+## 6. Sources and licences
 - OCR models: ONNX conversion [monkt/paddleocr-onnx](https://huggingface.co/monkt/paddleocr-onnx) of
   [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 (Apache-2.0)
 - Game text: Honkai: Star Rail © HoYoverse, from the [Dimbreath](https://github.com/DimbreathBot/TurnBasedGameData) dump

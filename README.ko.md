@@ -357,6 +357,21 @@ python tools/run_local.py submissions.json --validate-only
 `tools/folder_opener.py`(127.0.0.1 만 받는 작은 웹 서버, 무작위 토큰은 `work/folder_opener_token.txt`)를 띄워 보고의 링크로 실행 폴더를
 열거나 영상을 재생합니다. `submissions.json` 은 각자 입력이라 깃에 올리지 않습니다.
 
+### 3-6. 여러 건을 한꺼번에 검토
+```bash
+python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook review
+```
+- `--downloads M`: 분석 자리를 기다리는 건들의 영상을 최대 M 개까지 미리 받습니다(`prep.py`, 네트워크가 병목). 분석이 끝나면 다음 건의
+  영상이 이미 디스크에 있습니다.
+- `--jobs N`: 최대 N 건을 동시에 분석합니다. 건마다 따로 프로세스(`run_queue.py --worker <rev>`)라 서로의 상태를 건드리지 않습니다.
+  워커마다 OCR 모델을 올리고 영상을 디코드하므로 RAM · CPU 가 한계입니다(2~3 부터 시작해 메모리를 보세요). 빌드 읽기는 기본으로 GPU 를
+  쓰고, 워커끼리 GPU 를 다투면 `OCR_GPU=0` 으로 끕니다.
+- 같은 영상을 가리키는 건은 차례로 돕니다(받은 영상과 `work/video_cache` 의 전투 · 쇼케이스 캐시를 함께 쓰므로).
+- 보고 · `work/results.jsonl` · 디스코드 게시는 메인 프로세스가 한 건씩 씁니다. 순서는 대기열 순이 아니라 분석이 끝나는 순입니다. 건별 로그는
+  `runs/<rev>/worker.log` · `prefetch.log`.
+- `--jobs` · `--downloads` 가 없으면 예전처럼 한 건씩 처리합니다.
+- `--claim` 은 그 건의 분석을 시작할 때 「검토 중」을 표시합니다. 사이트의 표시는 1분뿐이고 여기서는 갱신하지 않습니다(5절).
+
 ## 4. 파일
 
 | 파일 | 하는 일 |
@@ -385,7 +400,25 @@ python tools/run_local.py submissions.json --validate-only
 | `auto/names.py` | 영어 게임 이름 → 언어별 TextMap 이름 |
 | `reject_templates.md` | 거절 사유 템플릿(언어별) |
 
-## 5. 출처 · 라이선스
+## 5. 여러 사람이 쓸 때 (대책이 필요함 — 아직 안 했음)
+위의 모든 것은 한 사람이 한 컴퓨터에서 쓴다고 가정합니다. 여러 검토자(또는 컴퓨터)가 같은 대기열에 이 봇을 돌리면 아래 문제가 생깁니다.
+그렇게 쓰기 전에 처리해야 해서 적어 둡니다.
+1. **같은 건을 둘이 검토.** 사이트의 「검토 중」 표시는 1분이고 `run_queue.py` 는 한 번만 겁니다. 두 실행기가 같은 건을 집을 수 있습니다.
+   판정 중 계속 갱신하는 잡기(heartbeat), 보고를 보내기 직전의 잡기 확인, 또는 누가 무엇을 하는지 나눠 보는 목록이 필요합니다.
+2. **컴퓨터끼리 아무것도 나누지 않음.** `runs/` 와 `work/video_cache` 가 각자 로컬이라 같은 영상을 컴퓨터마다 받고 다시 스캔합니다. 긴 영상 규칙
+   (「서로 다른 두 건이 이 영상을 가리킬 때」, `work/video_cache/submission_references.json`)도 그 컴퓨터가 본 건만 셉니다. 공용 캐시나
+   중앙 서비스가 필요합니다.
+3. **레지스트리 파일은 쓰는 쪽이 하나.** `video_policy.py` 와 캐시 게시는 컴퓨터 하나에 실행기 하나를 가정합니다. 공용 디스크에서 여러
+   실행기가 돌면 잠금(또는 데이터베이스)이 필요합니다.
+4. **보고 중복 · 순서.** 두 실행기가 같은 건을 두 번 올리고, 병렬 실행은 끝나는 순서로 올립니다. 보고에 건 식별자를 고정으로 싣고 이미 올렸으면
+   건너뛰어야 합니다.
+5. **인증 정보.** 사람마다 자기 검토자 토큰을 써야 합니다. 한 세션 토큰을 여럿이 나눠 쓰는 것은 위험합니다. 봇용 API 키(0-2절)가 해결책입니다.
+6. **버전이 다르면 판정이 다름.** 모두 같은 커밋을 써야 합니다. 보고에 커밋이 아직 안 나옵니다.
+7. **자원.** 건마다 `runs/` 에 100~300MB 가 남고 캐시가 자랍니다. 누가 언제 무엇을 지울지 정해야 합니다.
+8. **디스코드 한도.** 웹후크 하나는 호출 한도가 있습니다(전송기는 429/5xx 에서 다시 시도). 한 채널에 실행기가 여럿이면 게시자를 하나로 하거나
+   채널을 나눠야 합니다.
+
+## 6. 출처 · 라이선스
 - OCR 모델: [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5(Apache-2.0)의 ONNX 변환
   [monkt/paddleocr-onnx](https://huggingface.co/monkt/paddleocr-onnx)
 - 게임 글: 붕괴: 스타레일 © HoYoverse, [Dimbreath](https://github.com/DimbreathBot/TurnBasedGameData) 덤프

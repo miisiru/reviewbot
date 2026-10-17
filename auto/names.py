@@ -80,7 +80,9 @@ def text_index(lang):
             tri.setdefault(t, []).append(i)
     _idx[lang] = (strs, set(strs), tri)
     os.makedirs(IDX_DIR, exist_ok=True)
-    pickle.dump(_idx[lang], open(p, 'wb'))
+    tmp = f'{p}.{os.getpid()}.tmp'          # 동시에 돌 때 반쯤 쓰인 색인을 읽지 않게
+    pickle.dump(_idx[lang], open(tmp, 'wb'))
+    os.replace(tmp, p)
     return _idx[lang]
 
 
