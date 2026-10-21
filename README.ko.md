@@ -144,7 +144,7 @@ auto_judge.py
 ### 1-8. 그 밖
 - **UID:** 캐릭터 화면 왼쪽 아래 칸 OCR. 못 읽으면 감점.
 - **시작 시각:** 재생 시작(링크의 `t=`) 뒤 1분 안에 전투 HUD 라벨이 보여야 합니다(한 런짜리).
-- **팀 순서 확인(CHECK).** 첫째 자리 캐릭터가 4성이거나 개척자가 아닌 5성인데, 그 성혼이 2~4번 자리의 (4성도 개척자도 아닌) 캐릭터 누구보다 낮으면 CHECK 입니다(「First position X has a lower Eidolon than Y: confirm the team order」). 첫째 자리가 개척자면 성혼과 상관없이 바로 CHECK 입니다(「First position is a Trailblazer: confirm the team order」). 성은 게임 자료(`ExcelOutput/AvatarConfig.json`)의 Rarity, 개척자는 이름에 「Trailblazer」가 든 것입니다. 제출된 값만 씁니다.
+- **팀 순서 확인(CHECK).** 첫째 자리 캐릭터가 4성이거나 개척자가 아닌 5성인데, 그 성혼이 2~4번 자리의 (4성도 개척자도 아닌) 캐릭터 누구보다 낮으면 CHECK 입니다(「First position X has a lower Eidolon than Y: confirm the team order」). 첫째 자리가 개척자이거나 4성이면 성혼과 상관없이 바로 CHECK 입니다(「First position is a Trailblazer: confirm the team order」 · 「First position X is a 4-star: confirm the team order」). 성은 게임 자료(`ExcelOutput/AvatarConfig.json`)의 Rarity, 개척자는 이름에 「Trailblazer」가 든 것입니다. 제출된 값만 씁니다.
 - **빌리빌리 여러 파트:** 링크가 가리키는 파트(`?p=`)가 실전입니다. 파트끼리 섞지 않습니다(2파트와 3파트가 서로 다른 전투 · 빌드일 수 있음).
 
 ### 1-9. 신뢰도와 판정

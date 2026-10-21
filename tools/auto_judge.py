@@ -191,7 +191,7 @@ def tstart(url):
 
 def team_order_check(side):
     """첫째 자리(p1) 캐릭터가 4성이거나 개척자가 아닌 5성인데, 그 성혼이 2~4번 자리의 (4성이 아니고 개척자도 아닌) 캐릭터 누군가의 성혼보다
-    낮으면 사람이 본다(사용자, 2026-10-21). 개척자는 이름에 「Trailblazer」가 든 것이고, 개척자가 첫째 자리면 성혼과 상관없이 바로 사람이 본다(사용자, 2026-10-22). 이유 글을 돌려주고, 해당 없으면 None."""
+    낮으면 사람이 본다(사용자, 2026-10-21). 개척자는 이름에 「Trailblazer」가 든 것이고, 개척자나 4성이 첫째 자리면 성혼과 상관없이 바로 사람이 본다(사용자, 2026-10-22). 이유 글을 돌려주고, 해당 없으면 None."""
     import imgrec
     first = side.get('p1_char')
     if first and 'Trailblazer' in first:
@@ -200,6 +200,9 @@ def team_order_check(side):
     if not first:
         return None
     first_star = imgrec.rarity_of(judge.en_key(first))
+    if first_star == 4:
+        # 4성이 첫째 자리여도 성혼을 따지지 않고 바로 사람이 본다(사용자, 2026-10-22)
+        return f"First position {first} is a 4-star: confirm the team order"
     if first_star not in (4, 5) or type(side.get('p1_eidolon')) is not int:
         return None
     higher = []
