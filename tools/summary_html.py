@@ -56,7 +56,7 @@ a.rb-char:hover,a.rb-lc:hover{box-shadow:0 0 0 2px rgba(147,197,253,.8)}
 a.rb-name:hover{color:#93c5fd}
 .rb-meta{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:rgba(255,255,255,.25);white-space:nowrap;font-variant-numeric:tabular-nums}
 a.rb-meta:hover{color:rgba(255,255,255,.6)}
-.rb-yt{color:#f87171;font-weight:700;font-size:10px;letter-spacing:.06em}.rb-bili{color:#38bdf8;font-weight:700;font-size:10px;letter-spacing:.06em}
+.rb-yt,.rb-bili{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:10px;letter-spacing:.06em}.rb-yt{color:#f87171}.rb-bili{color:#38bdf8}
 .rb-pills{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .rb-pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 6px;border-radius:999px;border:1px solid rgba(56,189,248,.3);background:linear-gradient(90deg,rgba(14,165,233,.15),rgba(59,130,246,.10),rgba(14,165,233,.05));box-shadow:0 0 10px -2px rgba(56,189,248,.35);white-space:nowrap}
 .rb-pill i{width:4px;height:4px;border-radius:99px;background:#7dd3fc;box-shadow:0 0 6px rgba(56,189,248,.9)}
@@ -163,10 +163,11 @@ def when(iso):
 
 def platform(url):
     u = url or ''
+    # 아이콘과 글자를 같은 색 글자 상자 하나에 넣는다(사이트: text-red-400 안에 아이콘 + 「YT」). 따로 두면 아이콘이 바깥의 흐린 색을 물려받는다
     if 'bilibili' in u or 'b23.tv' in u:
-        return '<i class="fa-brands fa-bilibili"></i> <span class="rb-bili">bili</span>'
+        return '<span class="rb-bili inline-flex items-center gap-1.5 text-sky-400"><i class="fa-brands fa-bilibili text-[11px]"></i>bili</span>'
     if 'youtu' in u:
-        return '<i class="fa-brands fa-youtube"></i> <span class="rb-yt">YT</span>'
+        return '<span class="rb-yt inline-flex items-center gap-1.5 text-red-400"><i class="fa-brands fa-youtube text-[11px]"></i>YT</span>'
     return ''
 
 
