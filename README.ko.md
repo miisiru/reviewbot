@@ -144,6 +144,7 @@ auto_judge.py
 ### 1-8. 그 밖
 - **UID:** 캐릭터 화면 왼쪽 아래 칸 OCR. 못 읽으면 감점.
 - **시작 시각:** 재생 시작(링크의 `t=`) 뒤 1분 안에 전투 HUD 라벨이 보여야 합니다(한 런짜리).
+- **팀 순서 확인(CHECK).** 첫째 자리 캐릭터가 4성이거나 개척자가 아닌 5성인데, 그 성혼이 2~4번 자리의 (4성도 개척자도 아닌) 캐릭터 누구보다 낮으면 CHECK 입니다(「First position X has a lower Eidolon than Y: confirm the team order」). 성은 게임 자료(`ExcelOutput/AvatarConfig.json`)의 Rarity, 개척자는 이름에 「Trailblazer」가 든 것입니다. 제출된 값만 씁니다.
 - **빌리빌리 여러 파트:** 링크가 가리키는 파트(`?p=`)가 실전입니다. 파트끼리 섞지 않습니다(2파트와 3파트가 서로 다른 전투 · 빌드일 수 있음).
 
 ### 1-9. 신뢰도와 판정
@@ -372,8 +373,18 @@ python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook re
 - 같은 영상을 가리키는 건은 차례로 돕니다(받은 영상과 `work/video_cache` 의 전투 · 쇼케이스 캐시를 함께 쓰므로).
 - 보고 · `work/results.jsonl` · 디스코드 게시는 메인 프로세스가 한 건씩 씁니다. 순서는 대기열 순이 아니라 분석이 끝나는 순입니다. 건별 로그는
   `runs/<rev>/worker.log` · `prefetch.log`.
-- `--jobs` · `--downloads` 가 없으면 예전처럼 한 건씩 처리합니다.
+- 기본: 여러 건이면 분석 2건 · 영상 받기 2건을 동시에 합니다(`config.json` 의 `jobs` · `downloads` 로 기본값을 바꿈). 한 건씩은
+  `--jobs 1 --downloads 0`.
 - `--claim` 은 그 건의 분석을 시작할 때 「검토 중」을 표시합니다. 사이트의 표시는 1분뿐이고 여기서는 갱신하지 않습니다(5절).
+
+### 3-7. 요약 페이지 (HTML)
+여러 건 판정이 끝나면 `run_queue.py` 가 `work/summary_<시각>.html`(그리고 `work/summary_latest.html`)을 만들고 경로를 찍습니다. 판정별 묶음(CHECK,
+REJECT, APPROVE 순)에 카드로 나열합니다: 캐릭터 그림 + E / S 배지, 사이클 · 점수 알약, 하위 분류, 보스, Ltd / Std 수, 날짜 · 플랫폼, 사유. 모양은
+theherta.com 기록 목록(archive)을 따릅니다. `--no-summary` 로 끄고, `python tools/summary_html.py [rev_id ...]` 로 손으로 만듭니다.
+- 캐릭터 · 광추 그림은 페이지를 열 때 `https://theherta.com/px_char/<이름>.png` · `px_lc/<이름>.png` 에서 불러옵니다.
+- 사이트와 똑같은 모양으로 하려면 사이트의 archive 페이지를 본인 브라우저에서 열고 `tools/ui_dump_console.js` 를 DevTools 콘솔에 붙여 넣어 저장(`theherta-ui-dump.json` 이 내려받아짐)한 뒤
+  `python tools/extract_ui_theme.py <덤프.json>` 을 돌립니다. `data/ui_theme/site.css`(사이트 자신의 스타일시트라 깃에 올리지 않음)가 만들어집니다.
+  없으면 같은 색 · 모양을 직접 쓴 작은 스타일로 그립니다.
 
 ## 4. 파일
 
@@ -386,6 +397,7 @@ python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook re
 | `tools/segment_pipeline.py` | 영상별 전투 · 쇼케이스 경계 캐시, 타임스탬프로 전투 고르기, 고른 구간만 읽기 |
 | `tools/scan_battle_boundaries.py`(`_gated`) · `scan_showcases.py` | 전투 시작 · 끝 찾기(HUD + 글 OCR) · 쇼케이스 찾기 |
 | `tools/video_cache.py` · `video_policy.py` | 받은 영상 · 추출 결과 나눠 쓰기 · 긴 영상 받아 주기 |
+| `tools/summary_html.py` · `extract_ui_theme.py` | 한 묶음의 요약 페이지(3-7) · 저장한 사이트 페이지에서 스타일 뽑기 |
 | `tools/battle_sheets.py` · `report.py` | 고른 전투 시트 · 디스코드 보고 |
 | `tools/imgrec.py` · `get_assets.py` | 그림 근거(1-13) · 거기에 필요한 게임 그림 받기 |
 | `tools/folder_opener.py` · `benchmark_*.py` · `test_showcase_builds.py` | 로컬 실행 폴더 열기 · 시간 견주기 · 쇼케이스 시험 |

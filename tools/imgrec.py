@@ -10,7 +10,7 @@
   ui/path · ui/element 운명의 길 · 속성 아이콘
 캐릭터 얼굴(선택된 초상화) 인식은 쓰지 않는다(사용자, 2026-10-17: 이득이 없어 뺌).
 python imgrec.py <프레임.jpg> [...]   광추 화면 프레임이면 광추 순위를 찍는다"""
-import os, sys, glob, json
+import os, sys, glob, json, re
 import cv2
 import numpy as np
 
@@ -308,6 +308,23 @@ def avatar_ids():
                   'Trailblazer (Destruction)', 'Trailblazer (Preservation)'):
             _avid[k] = tb
     return _avid
+
+
+_rarity = None
+
+
+def rarity_of(en_name):
+    """캐릭터의 성(4 또는 5). 게임 자료 AvatarConfig 의 Rarity. 이름을 못 찾으면 None. 개척자는 여덟 아이디 가운데 첫 것."""
+    global _rarity
+    if _rarity is None:
+        import reasons
+        _rarity = {}
+        for r in reasons._excel('AvatarConfig.json'):
+            m = re.search(r'(\d)$', str(r.get('Rarity') or ''))
+            if m:
+                _rarity[r['AvatarID']] = int(m.group(1))
+    ids = char_ids(en_name)
+    return next((_rarity[i] for i in ids if i in _rarity), None)
 
 
 def char_ids(en_name):

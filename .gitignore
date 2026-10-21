@@ -21,6 +21,7 @@
 !/tools/*.py
 !/tools/*.sh
 !/tools/*.mjs
+!/tools/*.js
 !/tools/eidolon_names.json
 !/tools/lock_tpl.png
 !/tools/hourglass_tpl.png
@@ -38,3 +39,4 @@ __pycache__/
 *.pyc
 /tools/butterfly.py
 /tools/bf_tpl/
+/tools/names.js

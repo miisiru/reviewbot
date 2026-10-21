@@ -183,6 +183,7 @@ have no separator, so they never match.
 - **UID:** OCR of the bottom-left field on character screens. Unreadable lowers the confidence.
 - **Start time:** the battle HUD must appear within 62 s (1 minute) of the playback start (the link's `t=`), for single-run
   submissions.
+- **Team order check (CHECK).** If the first-position character is a 4-star, or a 5-star that is not a Trailblazer, and its Eidolon is lower than that of any 2nd–4th character that is neither a 4-star nor a Trailblazer, the item goes to CHECK ("First position X has a lower Eidolon than Y: confirm the team order"). Rarity comes from the game data (`ExcelOutput/AvatarConfig.json`); a Trailblazer is any name containing "Trailblazer". Only the submitted values are used.
 - **Multi-part Bilibili videos:** the part named by the link (`?p=`) is the run. Parts are never mixed: part 2 and part 3 can
   hold different battles and builds.
 
@@ -440,9 +441,20 @@ python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook re
   `work/video_cache`).
 - Reports, `work/results.jsonl` and the Discord post are written by the main process one at a time, in the order the
   analyses finish (not queue order). Per-item logs: `runs/<rev>/worker.log` and `prefetch.log`.
-- Without `--jobs` / `--downloads` the queue is processed one item at a time, as before.
+- Default: with more than one item the queue runs 2 analyses and 2 downloads at a time (`jobs` / `downloads` in `config.json`
+  change the defaults). One item at a time: `--jobs 1 --downloads 0`.
 - `--claim` marks an item "in review" when its analysis starts. The site's mark lasts only a minute and is not renewed
   here (see section 5).
+
+### 3-7. Summary page (HTML)
+When a batch of items has been judged, `run_queue.py` writes `work/summary_<time>.html` (and `work/summary_latest.html`) and prints its
+path. It lists the items grouped by verdict (CHECK first, then REJECT, then APPROVE) as cards: team portraits with E / S badges, the
+cycle / score pill, subcategory, boss, Ltd / Std counts, date and platform, and the reasons. The look follows theherta.com's archive
+page. `--no-summary` turns it off; `python tools/summary_html.py [rev_id ...]` builds one by hand.
+- Character and Light Cone pictures are loaded from `https://theherta.com/px_char/<name>.png` / `px_lc/<name>.png` when you open the page.
+- For the exact site style, open the site's archive page in your own browser, paste `tools/ui_dump_console.js` into the DevTools console
+  (it downloads `theherta-ui-dump.json`), then run `python tools/extract_ui_theme.py <dump.json>`. That writes `data/ui_theme/site.css`
+  (not committed; it is the site's own stylesheet). Without it the page uses the small built-in stylesheet with the same colors and shapes.
 
 ## 4. Files
 
@@ -455,6 +467,7 @@ python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook re
 | `tools/segment_pipeline.py` | cached battle / showcase boundaries, battle selection by timestamp, scoped extraction |
 | `tools/scan_battle_boundaries.py` (`_gated`) · `scan_showcases.py` | battle start / end scan (HUD + prompt OCR) · showcase scan |
 | `tools/video_cache.py` · `video_policy.py` | shared downloads and extraction results · long-video admission |
+| `tools/summary_html.py` · `extract_ui_theme.py` | summary page of a batch (3-7) · pulls the site style from a saved page |
 | `tools/battle_sheets.py` · `report.py` | sheets of the selected battle · the Discord report |
 | `tools/imgrec.py` · `get_assets.py` | picture evidence (1-13) · downloads the game pictures it needs |
 | `tools/folder_opener.py` · `benchmark_*.py` · `test_showcase_builds.py` | local run-folder opener · timing comparisons · showcase test |

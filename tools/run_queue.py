@@ -6,8 +6,10 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --fetch    먼저 mod_api.py queue 로 대기열을 새로 받는다
   --claim    판정 전에 「검토 중」 표시(mod_api.py claim)
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
-  --jobs N        한꺼번에 분석할 건 수(건마다 따로 프로세스, 기본 1)
-  --downloads M   분석 자리를 기다리는 건들의 영상을 미리 받는 수(기본 0 = 분석하면서 받는다). 병렬 예: --jobs 3 --downloads 3
+  --no-summary  끝에 만드는 요약 HTML(work/summary_<시각>.html, 사이트 모양)을 만들지 않는다
+  --jobs N        한꺼번에 분석할 건 수(건마다 따로 프로세스). 기본: 여러 건이면 2, 한 건이면 1(config.json 의 jobs)
+  --downloads M   분석 자리를 기다리는 건들의 영상을 미리 받는 수. 기본: 여러 건이면 2, 한 건이면 0(config.json 의 downloads)
+                  한 건씩만 하려면 --jobs 1 --downloads 0
 결과: runs/<rev>/auto.json · auto_log.txt, 요약은 work/results.jsonl 에 한 줄씩
 
 곧바로 CHECK 로 보내는 건(분석하지 않는다): 합친 제출(런 여럿), 같은 영상이 다른 건에도 있는데 이 건 링크에 타임스탬프가 없는 것
@@ -24,6 +26,7 @@ from report import report, as_text, video_key, check_result, attach_sheets   # n
 import video_policy   # noqa: E402
 
 ENV = dict(os.environ, PYTHONIOENCODING='utf8')
+DONE = []        # 이번에 판정이 난 건(곧바로 CHECK 포함) — 끝에 요약 HTML 로 만든다
 
 
 def sh(args, **kw):
@@ -153,6 +156,7 @@ def finish(rev, item, d, res, secs, wh):
         print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
         return
     video_policy.mark_result(item, res)
+    DONE.append(rev)
     embed = report(rev, res, item)
     print(as_text(embed), f'\n({secs:.0f}s)\n', flush=True)
     with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
@@ -181,6 +185,7 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
         why = gate_reason(rev, item, q, legacy)
         if why:                                   # 곧바로 CHECK 인 건은 분석 없이 바로 보고
             res = write_check(d, rev, item, why)
+            DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
             send(wh, embed, d, rev)
@@ -257,6 +262,19 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
         ex_run.shutdown(wait=False, cancel_futures=True)
 
 
+def summarize(started):
+    """이번에 처리한 건들의 요약 HTML(판정별 묶음 + 기록 카드, 사이트 모양)을 work/summary_<시각>.html 로 만든다. --no-summary 면 안 만든다."""
+    if '--no-summary' in sys.argv or not DONE:
+        return
+    try:
+        import summary_html
+        path = summary_html.write_summary(list(dict.fromkeys(DONE)), seconds=time.time() - started)
+        if path:
+            print(f'Summary: {path}', flush=True)
+    except Exception as e:
+        print('summary failed:', e, flush=True)
+
+
 def main():
     a = sys.argv[1:]
     opt = lambda k, d=None: a[a.index(k) + 1] if k in a else d
@@ -281,10 +299,16 @@ def main():
         revs = ready + revs
     byid = {x['id']: x for x in q}
     os.makedirs(WORK, exist_ok=True)
-    jobs, downloads = int(opt('--jobs', '1')), int(opt('--downloads', '0'))
+    # 여러 건이면 기본이 병렬(분석 2건 + 영상 미리 받기 2건). 한 건씩 하려면 --jobs 1 --downloads 0, 기본값은 config.json 의 jobs · downloads 로 바꾼다
+    many = len(revs) > 1
+    cfg = config()
+    jobs = int(opt('--jobs', str(cfg.get('jobs', 2 if many else 1))))
+    downloads = int(opt('--downloads', str(cfg.get('downloads', 2 if many else 0))))
     wh = opt('--webhook')
+    started = time.time()
     if jobs > 1 or downloads > 0:
         run_parallel(revs, byid, q, legacy, jobs, downloads, '--claim' in a, wh, qf)
+        summarize(started)
         return
     for rev in revs:
         t0 = time.time()
@@ -295,11 +319,13 @@ def main():
         why_skip = gate_reason(rev, item, q, legacy)
         if why_skip:
             res = write_check(d, rev, item, why_skip)
+            DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
             send(wh, embed, d, rev)
             continue
         finish(rev, item, d, run_item(rev, item, d), time.time() - t0, wh)
+    summarize(started)
 
 
 if __name__ == '__main__':

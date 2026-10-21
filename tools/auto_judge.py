@@ -183,6 +183,31 @@ def tstart(url):
     return int(m.group(1)) if m else 0
 
 
+def team_order_check(side):
+    """첫째 자리(p1) 캐릭터가 4성이거나 개척자가 아닌 5성인데, 그 성혼이 2~4번 자리의 (4성이 아니고 개척자도 아닌) 캐릭터 누군가의 성혼보다
+    낮으면 사람이 본다(사용자, 2026-10-21). 개척자는 이름에 「Trailblazer」가 든 것. 이유 글을 돌려주고, 해당 없으면 None."""
+    import imgrec
+    first = side.get('p1_char')
+    if not first or 'Trailblazer' in first:
+        return None
+    first_star = imgrec.rarity_of(judge.en_key(first))
+    if first_star not in (4, 5) or type(side.get('p1_eidolon')) is not int:
+        return None
+    higher = []
+    for i in (2, 3, 4):
+        name = side.get(f'p{i}_char')
+        if not name or 'Trailblazer' in name or type(side.get(f'p{i}_eidolon')) is not int:
+            continue
+        if imgrec.rarity_of(judge.en_key(name)) == 4:
+            continue
+        if side['p1_eidolon'] < side[f'p{i}_eidolon']:
+            higher.append(f"{name} (E{side[f'p{i}_eidolon']})")
+    if not higher:
+        return None
+    return (f"First position {first} ({first_star}-star, E{side['p1_eidolon']}) has a lower Eidolon than "
+            f"{', '.join(higher)}: confirm the team order")
+
+
 def run(rev, do_gp=True, reuse=False):
     d = os.path.join(ROOT, rev)
     # 느린 HUD · 보유 효과 · 시작 시각 읽기 결과는 auto_cache.json 에 남긴다. --reuse 면 그것을 다시 쓴다(빌드만 고쳤을 때)
@@ -195,6 +220,13 @@ def run(rev, do_gp=True, reuse=False):
     vids = json.load(open(os.path.join(d, 'videos.json'), encoding='utf8'))
     out = {'rev': rev, 'run': (rj.get('run_ids') or [None])[0], 'problems': [], 'checks': [], 'deductions': [], 'notes': [],
            'check_reasons': []}   # 문제는 아니지만 사람이 꼭 봐야 하는 것(있으면 CHECK)
+
+    try:
+        why = team_order_check(s0)
+        if why:
+            out['check_reasons'].append(why)
+    except Exception:
+        pass            # 게임 자료(ExcelOutput)가 없으면 이 확인만 건너뛴다
 
     selection_path = os.path.join(d, 'segment_selection.json')
     selection = json.load(open(selection_path, encoding='utf8')) if os.path.exists(selection_path) else None
