@@ -183,7 +183,7 @@ have no separator, so they never match.
 - **UID:** OCR of the bottom-left field on character screens. Unreadable lowers the confidence.
 - **Start time:** the battle HUD must appear within 62 s (1 minute) of the playback start (the link's `t=`), for single-run
   submissions.
-- **Team order check (CHECK).** If the first-position character is a 4-star, or a 5-star that is not a Trailblazer, and its Eidolon is lower than that of any 2nd–4th character that is neither a 4-star nor a Trailblazer, the item goes to CHECK ("First position X has a lower Eidolon than Y: confirm the team order"). Rarity comes from the game data (`ExcelOutput/AvatarConfig.json`); a Trailblazer is any name containing "Trailblazer". Only the submitted values are used.
+- **Team order check (CHECK).** If the first-position character is a 4-star, or a 5-star that is not a Trailblazer, and its Eidolon is lower than that of any 2nd–4th character that is neither a 4-star nor a Trailblazer, the item goes to CHECK ("First position X has a lower Eidolon than Y: confirm the team order"). If the first-position character is a Trailblazer, the item goes to CHECK right away, whatever the Eidolons are ("First position is a Trailblazer: confirm the team order"). Rarity comes from the game data (`ExcelOutput/AvatarConfig.json`); a Trailblazer is any name containing "Trailblazer". Only the submitted values are used.
 - **Multi-part Bilibili videos:** the part named by the link (`?p=`) is the run. Parts are never mixed: part 2 and part 3 can
   hold different battles and builds.
 

@@ -395,6 +395,14 @@ def hourglass_badge(f):
         red = ((px[:, 2] > 110) & (px[:, 2] - px[:, 1] > 50) & (px[:, 2] - px[:, 0] > 40)).mean()
         if red < 0.6:
             continue
+        # 진짜 배지는 곁에 작은 모래시계가 붙어 있다. 없으면 붉은 캐릭터 아이콘 · 붉은 칸이므로 건너뛴다(허구 이야기에서 붉은 아이콘을 숫자 2 · 0 으로 읽어 사이클을 잘못 셌다)
+        wx0, wx1 = max(0, x - r), min(c.shape[1], x + int(3.2 * r))
+        wy0, wy1 = max(0, y - int(1.3 * r)), min(c.shape[0], y + int(2.0 * r))
+        wm = _hg_binar(c[wy0:wy1, wx0:wx1])
+        kk, wl, wst, _ = cv2.connectedComponentsWithStats(wm, 8)
+        if not any(0.35 * r <= wst[j][3] <= 1.3 * r and _is_hourglass((wl[wst[j][1]:wst[j][1] + wst[j][3], wst[j][0]:wst[j][0] + wst[j][2]] == j).astype(np.uint8))
+                   for j in range(1, kk)):
+            continue
         t = c[y - r:y + r, x - r:x + r]
         big = cv2.resize(t, None, fx=48 / t.shape[0], fy=48 / t.shape[0], interpolation=cv2.INTER_CUBIC)
         gm = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
@@ -425,8 +433,16 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
         if late:
             end = min(late)
     reads = []
-    for t, f in tabs.frames(video, start, end - start, 1, W, H):
-        cs = hourglass_cells(f) or hourglass_badge(f)
+
+    def _frames():
+        yield from tabs.frames(video, start, end - start, 1, W, H)
+        # 전투가 끝나기 직전 마지막 턴에서 카운터가 한 칸 줄어드는 것은 1초 간격 표본에 안 걸리기도 한다(rev_1036vrx_1: 585.2초에 「⧗0」, 1초 표본은 「1」까지).
+        # 끝 4초는 0.25초 간격으로 한 번 더 읽는다
+        if end - start > 8:
+            yield from tabs.frames(video, end - 4.0, 3.9, 4, W, H)
+    for t, f in _frames():
+        # 배지(목록이 넘쳐 모래시계 칸이 밀렸을 때)는 허구 이야기 전용이다. 혼돈의 기억에서는 붉은 아하 칸의 숫자(「2」 등)를 카운터로 잘못 집는다
+        cs = hourglass_cells(f) or (hourglass_badge(f) if mode == 'pf' else None)
         if not cs:
             continue
         v = cs[0][1]               # 가장 앞(위) 칸
@@ -441,6 +457,7 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
             if v > 99:
                 continue
         reads.append((round(t, 1), v))
+    reads.sort()
     out = {'reads': reads, 'value': None, 'note': ''}
     if not reads:
         return out
@@ -457,7 +474,10 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
     # 화면 아래로 밀려 끝까지 안 보인다(rev_7dqskh 646초에 「⧗1」로 끊기고 전투는 820초까지) → 끝 값을 모르는 것
     last_t = reads[-1][0]
     seen = None
-    for t, f in tabs.frames(video, min(end, last_t + 5), max(0, end - last_t - 5), 0.2, W, H):
+    # 남은 구간이 없으면(마지막 읽은 뒤 5초 안에 전투가 끝남) 아예 보지 않는다. 길이 0 을 넘기면 frames 가 영상 끝까지 읽어서,
+    # 한 영상에 전투가 여럿인 건(합친 제출 · 같은 영상의 여러 기록)에서 뒤쪽 전투의 웨이브 표시를 「이 전투가 이어졌다」로 오해했다
+    rest = end - last_t - 5
+    for t, f in (tabs.frames(video, min(end, last_t + 5), rest, 0.2, W, H) if rest > 0.5 else []):
         c = f[0:int(0.2 * H), 0:int(0.16 * W)]
         if any(re.search(r'\b[1-5]\s*/\s*[1-5]\b', b[4]) for b in ocr(c, 'chinese')):
             seen = round(t, 1)

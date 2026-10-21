@@ -163,6 +163,24 @@ def finish(rev, item, d, res, secs, wh):
         f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
                             'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '\n')
     send(wh, embed, d, rev)
+    if wh and res['confidence'] <= 80:               # 확신도 80 이하는 질문 채널에도
+        send('question', embed, d, rev)
+    approve_if_clear(rev, item, res)
+
+
+def approve_if_clear(rev, item, res):
+    """--approve 일 때만: 승인 판정 · 확신도 90 이상 · 런 하나인 건을 사이트에서 승인한다. 거절은 어떤 경우에도 보내지 않는다."""
+    if '--approve' not in sys.argv:
+        return
+    pl = item.get('payload') or {}
+    if res['verdict'] != 'APPROVE' or res['confidence'] < 90 or item.get('kind') != 'single' or len(pl.get('runs') or [1]) > 1:
+        return
+    out = sh([os.path.join(HERE, 'mod_api.py'), 'decide', rev, 'approve', '--yes'])
+    ok = out.returncode == 0
+    print(f'{rev}: site approve {"ok" if ok else "FAILED " + (out.stdout or out.stderr or "")[:200]}', flush=True)
+    if not ok:
+        with open(os.path.join(WORK, 'approve_failed.txt'), 'a', encoding='utf8') as f:
+            f.write(rev + '\n')
 
 
 def source_key(item, rev):
@@ -188,7 +206,7 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
             DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
-            send(wh, embed, d, rev)
+            pass                                  # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지에만 넣는다
         else:
             todo.append(rev)
     ex_dl = ThreadPoolExecutor(max(1, downloads))
@@ -322,7 +340,7 @@ def main():
             DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
-            send(wh, embed, d, rev)
+            pass                                  # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지에만 넣는다
             continue
         finish(rev, item, d, run_item(rev, item, d), time.time() - t0, wh)
     summarize(started)

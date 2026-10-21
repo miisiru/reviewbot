@@ -455,7 +455,17 @@ def combine_eidolon_frames(candidates):
         return None, {'reason': 'fewer than two complete identified frames'}
     badges = {bool(f.get('activatable')) for f in usable}
     if len(badges) != 1:
-        return None, {'reason': 'activation badge readings disagree'}
+        # 성혼 화면에 막 들어온 몇 프레임은 메뉴의 빨간 「!」와 금색 빛이 아직 그려지지 않았다(노드도 어둡게 전환 중). 「!」가 없다가 한 번 생긴 뒤
+        # 계속 있으면(없음 → 있음, 한 번만 바뀜) 앞의 「없음」 프레임은 아직 덜 그려진 것이라 버리고 그린 뒤의 프레임으로 판정한다
+        # (rev_7kmqmj 블레이드: 261.62~261.68초 3프레임만 「열린 노드 2」, 이후 28프레임은 「!」와 함께 「열린 노드 2 중 1개는 활성화 가능」 → E1).
+        # 「있음 → 없음」이거나 여러 번 바뀌면 그대로 모른다.
+        ordered = sorted(usable, key=lambda f: f['t'])
+        flags = [bool(f.get('activatable')) for f in ordered]
+        first = flags.index(True) if True in flags else None
+        if first and all(flags[first:]) and len(flags) - first >= 2:
+            usable = ordered[first:]
+        else:
+            return None, {'reason': 'activation badge readings disagree'}
     maximum = [max(f['lock_scores'][i] for f in usable) for i in range(6)]
     icons = [f.get('icon_scores') for f in usable]
     mean_icons = ([round(float(np.mean([ic[i] for ic in icons if ic[i] is not None] or [np.nan])), 3) if any(ic[i] is not None for ic in icons) else None

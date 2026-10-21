@@ -4,5 +4,7 @@
  "mod_token": "Supabase access token (Bearer)",
  "mod_refresh_token": "Supabase refresh token",
  "supabase_url": "https://<project>.supabase.co",
- "supabase_anon_key": "사이트가 쓰는 공개 anon 키"
+ "supabase_anon_key": "사이트가 쓰는 공개 anon 키",
+ "webhook_username": "(optional) name shown on webhook posts",
+ "webhook_avatar_url": "(optional) image URL shown as the webhook avatar"
 }

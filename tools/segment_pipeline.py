@@ -435,6 +435,8 @@ def prepare(directory, payload, videos):
     reasons = list(battle.get('warnings') or []) + timing_reasons
     if battle.get('end_inferred'):
         reasons.append('Battle end inferred from the result screen, not a Battle Over banner; verify the end time')
+    if battle.get('start_inferred') and battle.get('start', 0) > 0:
+        reasons.append('Battle start inferred from the first HUD frame, not a Battle Start banner; verify the start time')
     if anchor is not None and any(c['start'] <= anchor <= c['end'] for c in data['showcases']):
         raise ValueError('Timestamp points into a showcase; manual review required')
     build_index = next((i for i, v in enumerate(videos) if v.get('role') == 'showcase'), selected)

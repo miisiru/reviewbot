@@ -5,7 +5,7 @@ python auto_judge.py <rev>   → runs/<rev>/auto.json + 요약(영어 디스코�
 import os, sys, re, json
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import judge, hud, gp, tabs      # noqa: E402
+import judge, hud, gp, tabs, scan_battle_boundaries      # noqa: E402
 from judge import ROOT, ocr      # noqa: E402
 import cv2                       # noqa: E402
 
@@ -39,11 +39,15 @@ def read_uid(rev, frames, selection=None):
         if not os.path.exists(p):
             continue
         f = cv2.imread(p)
+        # 위아래 · 옆 검은 띠가 있는 영상은 그림 영역의 왼쪽 아래에서 읽는다(띠 안으로 잘리지 않게). 띠가 없으면 f 그대로
+        f = scan_battle_boundaries.active_picture(f)
         H, W = f.shape[:2]
-        txt = ''.join(b[4] for b in ocr(f[int(0.88 * H):H, 0:int(0.25 * W)], 'chinese')).replace(' ', '')
-        m = re.search(r'(\d{9,10})', txt)
-        if m:
-            return m.group(1)
+        # 흐리게 늘린 띠가 있는 영상(검은 띠가 아니라 띠를 못 알아본다)은 UID 가 더 위에 있어 더 높은 창으로 한 번 더
+        for top in (0.88, 0.70):
+            txt = ''.join(b[4] for b in ocr(f[int(top * H):H, 0:int(0.25 * W)], 'chinese')).replace(' ', '')
+            m = re.search(r'(\d{9,10})', txt)
+            if m:
+                return m.group(1)
     # 캐릭터 화면에서 못 읽으면 전투 화면 왼쪽 아래 작은 「UID:…」에서(전투 중에도 나온다, rev_6quic9).
     # 글자가 작아 두 배로 키워 읽고, 영상 곳곳 12장에서 가장 많이 나온 값
     vids_p = os.path.join(ROOT, rev, 'videos.json')
@@ -59,6 +63,8 @@ def read_uid(rev, frames, selection=None):
         dur, W, H = tabs.probe(video)
         a, z = selection['battle'] if selection else (0, dur)
         for t, f in tabs.frames(video, a, z - a, 12 / max(z - a, 1), W, H):
+            f = scan_battle_boundaries.active_picture(f)
+            H, W = f.shape[:2]
             c = cv2.resize(f[int(0.9 * H):H, 0:int(0.3 * W)], None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             txt = ''.join(b[4] for b in ocr(c, 'chinese')).replace(' ', '')
             m = re.search(r'UID\D{0,2}(\d{9,10})', txt, re.I) or re.search(r'(\d{9,10})', txt)
@@ -185,10 +191,13 @@ def tstart(url):
 
 def team_order_check(side):
     """첫째 자리(p1) 캐릭터가 4성이거나 개척자가 아닌 5성인데, 그 성혼이 2~4번 자리의 (4성이 아니고 개척자도 아닌) 캐릭터 누군가의 성혼보다
-    낮으면 사람이 본다(사용자, 2026-10-21). 개척자는 이름에 「Trailblazer」가 든 것. 이유 글을 돌려주고, 해당 없으면 None."""
+    낮으면 사람이 본다(사용자, 2026-10-21). 개척자는 이름에 「Trailblazer」가 든 것이고, 개척자가 첫째 자리면 성혼과 상관없이 바로 사람이 본다(사용자, 2026-10-22). 이유 글을 돌려주고, 해당 없으면 None."""
     import imgrec
     first = side.get('p1_char')
-    if not first or 'Trailblazer' in first:
+    if first and 'Trailblazer' in first:
+        # 개척자가 첫째 자리면 성혼을 따지지 않고 바로 사람이 본다(사용자, 2026-10-22)
+        return f"First position is a Trailblazer: confirm the team order"
+    if not first:
         return None
     first_star = imgrec.rarity_of(judge.en_key(first))
     if first_star not in (4, 5) or type(side.get('p1_eidolon')) is not int:

@@ -109,7 +109,7 @@ def duration_decision(seconds, key, data=None):
         return {'reason': 'Could not read video duration', 'deferred': False, 'key': key}
     if seconds >= HARD_SECONDS:
         return {'reason': 'Video is 60 minutes or longer; not analyzed', 'deferred': False, 'key': key}
-    if seconds > NORMAL_SECONDS and reference_count(key, data) < 2:
+    if seconds > NORMAL_SECONDS and reference_count(key, data) < 2 and not os.environ.get('REVIEWBOT_ALLOW_LONG'):   # 사람이 직접 보려고 켜는 스위치
         return {'reason': 'Video over 20 minutes; waiting for a second distinct submission referencing this video',
                 'deferred': True, 'key': key}
     return None

@@ -160,12 +160,22 @@ def assemble(events):
                 ):
                     continue
 
+            # 시작 글만 읽히고 웨이브 숫자는 못 읽은 배너(「Início da Batalha」 …)가 열린 전투 안에서 나오면, 처음 시작이 N 웨이브(N>=2) 중 1 이었던 한
+            # 새 시작(재시작)이 아니라 같은 전투의 다음 웨이브 배너다. 진짜 재시작은 「1/N」 숫자가 읽힌다(rx0fh9 · r9e016). 숫자 없는 시작이 두 번째 시작이라고
+            # 해서 한 전투를 둘로 나누고 「첫 전투 불완전」 CHECK 로 보내던 건들(rev_bqtcwa · rev_9rq0p9)이 있었다
+            if (current is not None and event.get('wave') is None and (current.get('start_total') or 0) >= 2
+                    and event['t'] - current['start'] > 3.0):
+                current['waves'].append({'t': event['t'], 'wave': None, 'total': current['start_total']})
+                current.setdefault('notes', []).append('wave banner without a readable number inside the open battle')
+                continue
+
             if current is not None:
                 current['warnings'].append('New start before an end was detected')
                 current['status'] = 'CHECK'
                 segments.append(current)
             current = {'start': event['t'], 'end': None, 'waves': [],
-                       'status': 'candidate', 'warnings': []}
+                       'status': 'candidate', 'warnings': [],
+                       'start_wave': event.get('wave'), 'start_total': event.get('total_waves')}
             if event.get('start_inferred'):
                 current['start_inferred'] = True
                 current['start_source'] = event.get('source')
@@ -791,6 +801,32 @@ def run_hud_state(args):
                         info['hits'] += 1
             finally:
                 recovery.close()
+        # 끝은 찾았는데 시작 배너가 영상에 없다(녹화가 검은 화면으로 시작해 배너가 지난 뒤 전투 중으로 들어간다):
+        # 처음 30초 안에 HUD 가 연속 두 번 보이는 첫 시각을 시작으로 추정한다(start_inferred → 사람이 확인)
+        if (not any(hit['kind'] == 'start' for hit in observations) and any(hit['kind'] == 'end' for hit in observations)
+                and not args.no_repair):
+            streak, first = 0, None
+            stream = state_frames(FF, args.video, args.start, min(finish, args.start+30), 2, width, height)
+            try:
+                for t, frame in stream:
+                    sample = dict(t=round(t, 3), **hud.read(frame))
+                    if sample['present']:
+                        streak += 1
+                        if streak == 1:
+                            first, first_frame = t, frame
+                        if streak >= 2:
+                            break
+                    else:
+                        streak, first = 0, None
+            finally:
+                stream.close()
+            if streak >= 2 and first is not None:
+                inferred = {'kind': 'start', 'wave': None, 'total_waves': None, 'text': '', 'score': None, 't': first, 'last_t': first,
+                            'source': 'first_hud', 'start_inferred': True, 'evidence': 'first_hud.jpg'}
+                if not cv2.imwrite(str(output/'first_hud.jpg'), first_frame):
+                    inferred['evidence'] = None
+                observations.append(inferred)
+                print(f'Battle start {first:.2f}s (first HUD, start inferred)', flush=True)
     finally:
         diagnostics.close()
     events = scanner.consolidate_events(observations, observations)

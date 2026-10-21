@@ -11,7 +11,19 @@ def text(msg):
     return {'content': msg[:1990], 'flags': 4}
 
 
+def _brand(payload):
+    """config.json 의 webhook_username · webhook_avatar_url 로 보내는 이름 · 그림을 정한다. payload 에 이미 있으면 그대로 둔다."""
+    cfg = config()
+    out = dict(payload)
+    if cfg.get('webhook_username') and 'username' not in out:
+        out['username'] = str(cfg['webhook_username'])[:80]
+    if cfg.get('webhook_avatar_url') and 'avatar_url' not in out:
+        out['avatar_url'] = cfg['webhook_avatar_url']
+    return out
+
+
 def _post_once(key, payload, files=()):
+    payload = _brand(payload)
     # 환경 변수는 검토 보고용 웹후크만 바꾼다(질문 · 시험 웹후크로 가야 할 글이 보고 채널로 새지 않게)
     url = (os.environ.get('DISCORD_WEBHOOK_URL') if key == 'discord_webhook' else None) or config().get(key)
     if not url:
