@@ -32,6 +32,51 @@ def ocr(img, model):
     return _ocr[key](img, scale=scale)
 
 
+EXPECT_UID = None     # auto_judge 가 전투 화면에서 읽은 제출 계정 UID. 쇼케이스 화면의 UID 가 이것과 크게 다르면 다른 계정의 화면이라 증거로 쓰지 않는다
+
+
+def _uid_close(a, b):
+    """UID 두 개가 같거나 OCR 오독 한두 글자 차이인가(자리 수가 다르면 다른 UID)."""
+    return len(a) == len(b) and sum(x != y for x, y in zip(a, b)) <= 2
+
+
+def frame_uid(path):
+    """쇼케이스 화면 왼쪽 아래의 「UID:…」 숫자(못 읽으면 None)."""
+    img = cv2.imread(path)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    for top in (0.93, 0.88):
+        crop = cv2.resize(img[int(top * h):h, 0:int(0.22 * w)], None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        txt = ''.join(b[4] for b in ocr(crop, 'latin')).replace(' ', '')
+        m = re.search(r'(\d{9,10})', txt)
+        if m:
+            return m.group(1)
+    return None
+
+
+def only_expected_uid(frames, rev=''):
+    """한 영상의 쇼케이스에 다른 계정의 캐릭터 화면이 이어 붙는 일이 있다(rev_emf8hf: 제출 계정 12명 뒤에 두 계정의 화면). 같은 캐릭터 화면이
+    둘이면 나중 것을 골라 다른 계정의 성혼을 읽었다. 전투 화면 UID(EXPECT_UID)와 다른 UID 가 읽힌 프레임은 뺀다. 먼저 고르게 8장만 읽어 모두 맞으면
+    (보통) 나머지는 읽지 않는다. UID 를 못 읽은 프레임은 그대로 둔다."""
+    if not EXPECT_UID or not frames:
+        return frames
+    step = max(1, len(frames) // 8)
+    sample = [frame_uid(f['path']) for f in frames[::step]]
+    if all(u is None or _uid_close(u, EXPECT_UID) for u in sample):
+        return frames
+    kept, dropped = [], 0
+    for f in frames:
+        u = frame_uid(f['path'])
+        f['uid'] = u
+        if u is not None and not _uid_close(u, EXPECT_UID):
+            dropped += 1
+            continue
+        kept.append(f)
+    print(f'{rev}: dropped {dropped} showcase frames with another UID (expected {EXPECT_UID}); kept {len(kept)}', flush=True)
+    return kept
+
+
 def norm(s):
     # 라틴 글자의 성조 · 악센트만 지운다. 분해한 뒤 다시 합쳐야 한글 음절이 자모로 쪼개진 채 남지 않는다
     s = unicodedata.normalize('NFKD', str(s)).lower()
@@ -1055,6 +1100,7 @@ def judge(rev, build_indices=None):
         frame for frame in frames
         if frame['vid'] in build_indices
     ]
+    frames = only_expected_uid(frames, rev)
     # 언어(모델) 고르기: 광추 패널 제목이 제출 광추 이름과 가장 잘 맞는 모델
     # 언어(모델) 고르기: 광추 화면 두 장의 제목 · 머리글이 제출 이름들과 가장 잘 맞는 모델.
     # 한국어 글은 중국어 모델로 못 읽고, 중국어 모델이 한국어 영상에서도 숫자 · 라틴 글자로 그럴듯하게 맞는 일이 있어

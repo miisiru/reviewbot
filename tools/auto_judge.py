@@ -49,7 +49,11 @@ def read_uid(rev, frames, selection=None):
             if m:
                 return m.group(1)
     # 캐릭터 화면에서 못 읽으면 전투 화면 왼쪽 아래 작은 「UID:…」에서(전투 중에도 나온다, rev_6quic9).
-    # 글자가 작아 두 배로 키워 읽고, 영상 곳곳 12장에서 가장 많이 나온 값
+    return battle_uid(rev, selection)
+
+
+def battle_uid(rev, selection=None):
+    """전투 화면 왼쪽 아래 작은 「UID:…」. 글자가 작아 두 배로 키워 읽고, 영상 곳곳 12장에서 가장 많이 나온 값(두 번 이상). 못 읽으면 None."""
     vids_p = os.path.join(ROOT, rev, 'videos.json')
     if not os.path.exists(vids_p):
         return None
@@ -314,6 +318,10 @@ def run(rev, do_gp=True, reuse=False):
 
         return False
 
+    # 제출 계정의 UID: 전투 화면 왼쪽 아래의 「UID:…」(영상 곳곳 12장 중 두 번 이상 나온 값). 쇼케이스에 다른 계정의 화면이 섞여도 걸러 낸다
+    judge.EXPECT_UID = battle_uid(rev, selection) if selection else None
+    if judge.EXPECT_UID:
+        print(f'{rev}: expected UID from the battle screen {judge.EXPECT_UID}', flush=True)
     # Judge each part separately; never pool their build frames.
     if selection:
         from segment_pipeline import bounded_frames
