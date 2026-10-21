@@ -15,13 +15,14 @@
 !/startreviews.bat
 !/start-folder-opener.bat
 !/tools/
+!/ui_theme/
 !/auto/
 
 /tools/*
 !/tools/*.py
 !/tools/*.sh
 !/tools/*.mjs
-!/tools/*.js
+
 !/tools/eidolon_names.json
 !/tools/lock_tpl.png
 !/tools/hourglass_tpl.png

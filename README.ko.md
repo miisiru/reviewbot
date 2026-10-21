@@ -380,11 +380,15 @@ python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook re
 ### 3-7. 요약 페이지 (HTML)
 여러 건 판정이 끝나면 `run_queue.py` 가 `work/summary_<시각>.html`(그리고 `work/summary_latest.html`)을 만들고 경로를 찍습니다. 판정별 묶음(CHECK,
 REJECT, APPROVE 순)에 카드로 나열합니다: 캐릭터 그림 + E / S 배지, 사이클 · 점수 알약, 하위 분류, 보스, Ltd / Std 수, 날짜 · 플랫폼, 사유. 모양은
-theherta.com 기록 목록(archive)을 따릅니다. `--no-summary` 로 끄고, `python tools/summary_html.py [rev_id ...]` 로 손으로 만듭니다.
-- 캐릭터 · 광추 그림은 페이지를 열 때 `https://theherta.com/px_char/<이름>.png` · `px_lc/<이름>.png` 에서 불러옵니다.
-- 사이트와 똑같은 모양으로 하려면 사이트의 archive 페이지를 본인 브라우저에서 열고 `tools/ui_dump_console.js` 를 DevTools 콘솔에 붙여 넣어 저장(`theherta-ui-dump.json` 이 내려받아짐)한 뒤
-  `python tools/extract_ui_theme.py <덤프.json>` 을 돌립니다. `data/ui_theme/site.css`(사이트 자신의 스타일시트라 깃에 올리지 않음)가 만들어집니다.
-  없으면 같은 색 · 모양을 직접 쓴 작은 스타일로 그립니다.
+theherta.com 기록 목록(archive)을 따릅니다(`ui_theme/site.css` 는 그 사이트의 스타일시트라 페이지가 사이트와 같게 나옵니다). `--no-summary` 로 끄고,
+`python tools/summary_html.py [rev_id ...]` 로 손으로 만듭니다.
+- **그림**은 우리 assets 저장소(Hugging Face `fffffffff1/assets`)의 것입니다: 캐릭터 얼굴 `spriteoutput/avataricon/avatar/<아이디>.png`(사이트 그림과
+  픽셀까지 같음), 광추 아이콘 `spriteoutput/itemicon/lightconeicons/<아이디>.png`. 개척자(아이디 여럿)와 없는 그림은 사이트 그림으로 대신합니다.
+- **시각**은 `1m 1s` 꼴이고 영상의 그 시각으로 가는 링크입니다(유튜브 `?t=초`, 빌리빌리 `?p=파트&t=초` — 빌리빌리 꼴은 링크를 열어 재생 위치를 읽어 확인함).
+  사유마다 관련 시각이 붙습니다: 사유에 든 캐릭터 이름은 그 캐릭터가 나오는 시각(「Light Cone Superimposition not shown」이면 성혼 화면), 「(at 11m 48s)」
+  목록은 시각마다, 사이클 · 점수 사유는 전투 끝, 구간 고르기 사유는 전투와 쇼케이스로 연결됩니다. 캐릭터 · 광추 그림을 누르면 영상에서 그 캐릭터 화면으로,
+  작성자 이름 · 날짜를 누르면 영상이 새 탭에 열립니다.
+- **기록마다 「Process on site」 단추**가 있어 `https://theherta.com/mod?review=<rev>` 를 새 탭에 엽니다.
 
 ## 4. 파일
 
@@ -397,7 +401,7 @@ theherta.com 기록 목록(archive)을 따릅니다. `--no-summary` 로 끄고, 
 | `tools/segment_pipeline.py` | 영상별 전투 · 쇼케이스 경계 캐시, 타임스탬프로 전투 고르기, 고른 구간만 읽기 |
 | `tools/scan_battle_boundaries.py`(`_gated`) · `scan_showcases.py` | 전투 시작 · 끝 찾기(HUD + 글 OCR) · 쇼케이스 찾기 |
 | `tools/video_cache.py` · `video_policy.py` | 받은 영상 · 추출 결과 나눠 쓰기 · 긴 영상 받아 주기 |
-| `tools/summary_html.py` · `extract_ui_theme.py` | 한 묶음의 요약 페이지(3-7) · 저장한 사이트 페이지에서 스타일 뽑기 |
+| `tools/summary_html.py` · `ui_theme/site.css` | 한 묶음의 요약 페이지(3-7) · 그것이 쓰는 사이트 스타일시트 |
 | `tools/battle_sheets.py` · `report.py` | 고른 전투 시트 · 디스코드 보고 |
 | `tools/imgrec.py` · `get_assets.py` | 그림 근거(1-13) · 거기에 필요한 게임 그림 받기 |
 | `tools/folder_opener.py` · `benchmark_*.py` · `test_showcase_builds.py` | 로컬 실행 폴더 열기 · 시간 견주기 · 쇼케이스 시험 |

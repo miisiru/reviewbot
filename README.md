@@ -450,11 +450,17 @@ python tools/run_queue.py --fetch --limit 10 --jobs 3 --downloads 3 --webhook re
 When a batch of items has been judged, `run_queue.py` writes `work/summary_<time>.html` (and `work/summary_latest.html`) and prints its
 path. It lists the items grouped by verdict (CHECK first, then REJECT, then APPROVE) as cards: team portraits with E / S badges, the
 cycle / score pill, subcategory, boss, Ltd / Std counts, date and platform, and the reasons. The look follows theherta.com's archive
-page. `--no-summary` turns it off; `python tools/summary_html.py [rev_id ...]` builds one by hand.
-- Character and Light Cone pictures are loaded from `https://theherta.com/px_char/<name>.png` / `px_lc/<name>.png` when you open the page.
-- For the exact site style, open the site's archive page in your own browser, paste `tools/ui_dump_console.js` into the DevTools console
-  (it downloads `theherta-ui-dump.json`), then run `python tools/extract_ui_theme.py <dump.json>`. That writes `data/ui_theme/site.css`
-  (not committed; it is the site's own stylesheet). Without it the page uses the small built-in stylesheet with the same colors and shapes.
+page (`ui_theme/site.css` is that site's stylesheet, so the page matches it). `--no-summary` turns it off;
+`python tools/summary_html.py [rev_id ...]` builds one by hand.
+- **Pictures** come from our assets repository (`fffffffff1/assets` on Hugging Face): the character face
+  `spriteoutput/avataricon/avatar/<id>.png` (pixel-identical to the site's picture) and the Light Cone icon
+  `spriteoutput/itemicon/lightconeicons/<id>.png`. Trailblazers (several ids) and missing pictures fall back to the site's pictures.
+- **Times** are written as `1m 1s` and link to that moment of the video (YouTube `?t=<seconds>`, Bilibili `?p=<part>&t=<seconds>`; the
+  Bilibili form was checked by opening a link and reading the player position). Each reason carries the relevant time: a character's
+  name in the reason links to when that character appears (for "Light Cone Superimposition not shown" the Eidolon page), "(at 11m 48s)"
+  lists link to each time, cycle / score reasons link to the battle end, selection reasons link to the battle and showcase.
+  Clicking a character or Light Cone picture jumps to that character's page in the video; the author name and date open the video.
+- **Each record has a "Process on site" button** that opens `https://theherta.com/mod?review=<rev>` in a new tab.
 
 ## 4. Files
 
@@ -467,7 +473,7 @@ page. `--no-summary` turns it off; `python tools/summary_html.py [rev_id ...]` b
 | `tools/segment_pipeline.py` | cached battle / showcase boundaries, battle selection by timestamp, scoped extraction |
 | `tools/scan_battle_boundaries.py` (`_gated`) · `scan_showcases.py` | battle start / end scan (HUD + prompt OCR) · showcase scan |
 | `tools/video_cache.py` · `video_policy.py` | shared downloads and extraction results · long-video admission |
-| `tools/summary_html.py` · `extract_ui_theme.py` | summary page of a batch (3-7) · pulls the site style from a saved page |
+| `tools/summary_html.py` · `ui_theme/site.css` | summary page of a batch (3-7) · the site's stylesheet it uses |
 | `tools/battle_sheets.py` · `report.py` | sheets of the selected battle · the Discord report |
 | `tools/imgrec.py` · `get_assets.py` | picture evidence (1-13) · downloads the game pictures it needs |
 | `tools/folder_opener.py` · `benchmark_*.py` · `test_showcase_builds.py` | local run-folder opener · timing comparisons · showcase test |
