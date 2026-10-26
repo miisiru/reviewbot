@@ -176,6 +176,11 @@ def render(items, lang):
             c, a, b = C(it['char']), it['sub'], it['video']
             out.append({'KR': f'{c} 성혼 불일치 (제출 E{a}, 영상 E{b})', 'EN': f'{c} Eidolons mismatch (submitted E{a}, video E{b})',
                         'CN': f'{c}星魂与提交不符（提交为{a}魂，视频中为{b}魂）', 'JP': f'{c}の星魂が申請と不一致（申請{a}、動画{b}）'}[lang])
+        elif k == 'external_card':
+            out.append({'KR': '게임 내에서 UID가 명확하게 보이도록 캐릭터 장비 화면을 표시해야 합니다. 동영상만 허용되며, 이미지는 허용되지 않습니다.',
+                        'EN': 'The run’s equipment must be shown in-game with your UID clearly visible. Submissions using PNG images are not accepted.',
+                        'CN': '投稿必须包含游戏内配置展示，且UID清晰可见。仅接受视频，不接受图片投稿。',
+                        'JP': '装備画面をUIDがはっきりと見える状態でゲーム内で表示する必要があります。動画のみ受け付けており、画像による投稿は受け付けておりません。'}[lang])
         elif k == 'score_mismatch':
             a, b = it['sub'], it['video']
             out.append({'KR': f'점수 불일치 (제출 {a}, 영상 {b})', 'EN': f'Score mismatch (submitted {a}, video {b})',
