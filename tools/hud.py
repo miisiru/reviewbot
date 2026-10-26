@@ -433,6 +433,7 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
         if late:
             end = min(late)
     reads = []
+    tops = {}
 
     def _frames():
         yield from tabs.frames(video, start, end - start, 1, W, H)
@@ -446,6 +447,7 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
         if not cs:
             continue
         v = cs[0][1]               # 가장 앞(위) 칸
+        tops[round(t, 1)] = cs[0][0] < 0.14 * H
         if mode == 'pf':
             v = int(v[-1])         # 카운터는 한 자리(「13」 = 구분선 + 3)
             if v > 3:
@@ -491,6 +493,10 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
         later = [v for t, v in reads if t > stable[-1][0]]
         if later and later[-1] == n - 1:
             n = later[-1]
+        elif n >= 1 and tops.get(last_t) and end - last_t > 8:
+            # 칸이 맨 위(곧 지나갈 자리)에서 마지막으로 보였고 그 뒤로 전투가 8초 넘게 이어졌는데 다시 안 보이면 그 칸을 지난 것
+            # (목록이 길어 밀려난 것이 아님 · rev_ha808g 408초 「⧗1」이 맨 위, 412초에 사라지고 425초에 승리)
+            n -= 1
         out['value'] = 3 - n
         out['counter'] = n
         if n == 0:
