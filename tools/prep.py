@@ -118,7 +118,7 @@ def download(u, v):
                 return log + f"\nERROR: download too slow (gave up after {DL_TIMEOUT // 60} min)\n"
             log += p.stdout + (p.stderr or "")[-1000:]
             out = p.stdout
-            if (not os.path.exists(v) and "youtube" in u.lower() or "youtu.be" in u.lower()) and not os.path.exists(v)                     and re.search(r"not available|unplayable|unavailable", p.stderr or "", re.I):
+            if not os.path.exists(v) and ("youtube.com" in u.lower() or "youtu.be" in u.lower())                     and re.search(r"not available|unplayable|unavailable", p.stderr or "", re.I):
                 # 브라우저에서는 열리는데 yt-dlp 기본 방식만 「This video is not available」로 막히는 영상이 있다(rev_1dn1x3l).
                 # android 클라이언트로 한 번 더 시도해 보고, 그래도 안 되면 그때 못 받은 것으로 본다
                 p = subprocess.run([YT, *YT_COOKIES, "-q", "--no-progress", "--extractor-args", "youtube:player_client=android", "--retries", "20",
