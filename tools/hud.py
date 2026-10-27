@@ -512,10 +512,13 @@ def scan_cycles(rev, vid=0, mode='moc', start=0.0, end=None):
     return out
 
 
-def cycles_out_banner(video, a, b, W, H, model='chinese'):
+def cycles_out_banner(video, a, b, W, H, model=None):
     """PF 에서 행동값을 다 써 끝날 때 화면 위쪽 가운데에 1초쯤 뜨는 빨간 띠 「Remaining Cycles: 0」(剩余轮次：0 …).
     이것이 보이면 4 사이클, 없으면 ⧗0 으로 끝난 3 사이클(사용자, 2026-10-09). 5fps 로 빨간 띠가 있는 프레임만 읽는다
-    → 처음 본 시각(못 보면 None)"""
+    → 처음 본 시각(못 보면 None).
+    띠 글자는 게임 언어마다 다르다(러시아어 「Осталось циклов: 0」 …). 한 모델만 쓰면 다른 글자꼴을 못 읽어 3 사이클로 잘못 판정했다
+    (rev_18f6sz8). 중국어 · 라틴 두 모델로 읽고, 끝이 「: 0」 꼴이면 받는다. 숫자 0 은 글자꼴과 상관없이 같으므로 키릴 문자도 잡힌다."""
+    models = (model,) if model else ('chinese', 'latin')
     for t, f in tabs.frames(video, max(0, a), max(1, b - a), 5, W, H):
         c = f[int(0.2 * H):int(0.38 * H), int(0.25 * W):int(0.75 * W)]
         hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
@@ -523,9 +526,18 @@ def cycles_out_banner(video, a, b, W, H, model='chinese'):
         rows = red.mean(axis=1) > 0.35           # 띠는 가로로 넓다(화면 폭의 30% 남짓)
         if rows.sum() < 0.03 * H:
             continue
-        for bx in ocr(c, model):
-            if re.search(r'[:：]\s*0\s*$', bx[4].strip()):
-                return round(t, 1)
+        # 띠만 잘라(빨간 줄 · 칸) 오른쪽 45% 를 5배 키워 끝의 「: 0」을 따로 읽는다. 통째로 읽으면 끝 숫자를 놓친다(rev_18f6sz8 러시아어)
+        ys = np.where(rows)[0]
+        band = c[ys.min():ys.max() + 1]
+        xs = np.where(red[ys.min():ys.max() + 1].mean(axis=0) > 0.5)[0]
+        if len(xs) > 20:
+            band = band[:, xs.min():xs.max() + 1]
+        right = cv2.resize(band[:, int(band.shape[1] * 0.55):], None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)
+        for m in models:
+            for img in (right, c):
+                for bx in ocr(img, m):
+                    if re.search(r'[:：]\s*0\s*$', bx[4].strip()):
+                        return round(t, 1)
     return None
 
 
