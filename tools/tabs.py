@@ -594,7 +594,8 @@ def main():
         static = static_text(video, a, b, W, H, lay)
         lines.append(f'# window {a:.1f}-{b:.1f} layout x={lay[0]:.0f} y0={lay[1]:.0f} sp={lay[2]:.1f}'
                      f' watermark_px={0 if static is None else int(static.sum())}')
-        segs, keep = scan(video, a, b - a, W, H, lay, static=static)
+        # TABS_FPS: 판정 뒤 「광추 · 성혼을 못 찾음」이 남으면 auto_judge 가 30 으로 한 번 더 훑는다(탭을 빠르게 넘긴 0.3초짜리 화면을 잡으려고)
+        segs, keep = scan(video, a, b - a, W, H, lay, fps=int(os.environ.get('TABS_FPS', '10')), static=static)
         for s in segs:
             lines.append(f'{s[0]:8.2f} {s[1]:8.2f} {s[2]}')
         kept += keep

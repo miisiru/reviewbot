@@ -2,7 +2,7 @@
 결과 화면은 쓰지 않는다(최고 기록을 보여 줄 수 있어서). 신뢰도는 아래 고정 공식(측정값으로 감점)이라 같은 영상이면 늘 같다.
 판정: REJECT(확실한 문제) / CHECK(못 읽은 항목이 있거나 신뢰도 80 이하) / APPROVE
 python auto_judge.py <rev>   → runs/<rev>/auto.json + 요약(영어 디스코드 글 꼴)"""
-import os, sys, re, json
+import os, sys, re, json, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import judge, hud, gp, tabs, scan_battle_boundaries      # noqa: E402
@@ -224,6 +224,45 @@ def team_order_check(side):
             f"{', '.join(higher)}: confirm the team order")
 
 
+def _missing_pages(b):
+    """광추 화면 · 성혼 화면을 못 찾은 캐릭터 칸 수."""
+    return sum((c.get('lc_seen') is None) + (c.get('e_t') is None) for c in b.get('chars', []))
+
+
+def dense_rescue(rev, d, selection, build_indices, b, limits, bounded_frames):
+    """판정 뒤에도 광추 · 성혼 화면을 못 찾은 캐릭터가 있으면, 쇼케이스 구간만 30fps 로 다시 훑어(tabs.py TABS_FPS=30) 다시 판정한다.
+    탭을 빠르게 넘기면 켜진 탭 하이라이트가 0.3초도 안 뜨는데(rev_1hxsxru 498.1초: 로빈 광추 화면), 10fps 로는 그 몇 프레임을 놓친다.
+    더 많이 찾으면 그 결과를 쓰고, 아니면 원래 결과로 되돌린다."""
+    before = _missing_pages(b)
+    if before == 0 or os.environ.get('REVIEWBOT_NO_DENSE'):
+        return b
+    import shutil
+    idx = selection['build_index']
+    tdir = os.path.join(d, f'tabs{idx}')
+    backup = tdir + '_normal'
+    if os.path.exists(backup):
+        shutil.rmtree(backup)
+    shutil.copytree(tdir, backup)
+    a, z = selection['build']
+    env = dict(os.environ, TABS_FPS='30', PYTHONIOENCODING='utf8')
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'tabs.py'), rev, str(idx), str(a), str(z - a)],
+                       capture_output=True, text=True, encoding='utf8', errors='replace', env=env, cwd=ROOT)
+    nb = None
+    if r.returncode == 0:
+        with bounded_frames(tabs, limits):
+            nb = judge.judge(rev, build_indices=build_indices)
+    if nb is not None and _missing_pages(nb) < before:
+        print(f'{rev}: dense rescan (30fps) found more build pages ({before} -> {_missing_pages(nb)} missing)', flush=True)
+        shutil.rmtree(backup, ignore_errors=True)
+        nb['dense_rescan'] = True
+        return nb
+    shutil.rmtree(tdir, ignore_errors=True)
+    shutil.copytree(backup, tdir)
+    shutil.rmtree(backup, ignore_errors=True)
+    with bounded_frames(tabs, limits):
+        return judge.judge(rev, build_indices=build_indices)
+
+
 def run(rev, do_gp=True, reuse=False):
     d = os.path.join(ROOT, rev)
     # 느린 HUD · 보유 효과 · 시작 시각 읽기 결과는 auto_cache.json 에 남긴다. --reuse 면 그것을 다시 쓴다(빌드만 고쳤을 때)
@@ -328,6 +367,7 @@ def run(rev, do_gp=True, reuse=False):
         limits = {os.path.join(d, vids[selection['build_index']]['file']): selection['build']}
         with bounded_frames(tabs, limits):
             b = judge.judge(rev, build_indices=build_indices)
+        b = dense_rescue(rev, d, selection, build_indices, b, limits, bounded_frames)
     else:
         b = judge.judge(rev, build_indices=build_indices)
 
