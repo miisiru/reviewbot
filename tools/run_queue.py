@@ -6,6 +6,7 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --fetch    먼저 mod_api.py queue 로 대기열을 새로 받는다
   --claim    판정 전에 「검토 중」 표시(mod_api.py claim)
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
+  --keep-order  받은 순서 그대로(기본은 후원자 먼저 + 제출 시각 오래된 순, tools/queue_order.py)
   --no-summary  끝에 만드는 요약 HTML(work/summary_<시각>.html, 사이트 모양)을 만들지 않는다
   --jobs N        한꺼번에 분석할 건 수(건마다 따로 프로세스). 기본: 여러 건이면 2, 한 건이면 1(config.json 의 jobs)
   --downloads M   분석 자리를 기다리는 건들의 영상을 미리 받는 수. 기본: 여러 건이면 2, 한 건이면 0(config.json 의 downloads)
@@ -293,6 +294,20 @@ def summarize(started):
         print('summary failed:', e, flush=True)
 
 
+def review_order(q, revs):
+    """검토 순서: 후원자(사이트의 Donor Lane · HIGH PRIORITY)의 기록이 먼저, 각 줄 안에서는 제출된 시각(created_at) 오래된 순.
+    영상 날짜(payload.video_date)는 쓰지 않는다. 후원자 목록을 못 받으면 제출 시각 순만 쓴다. 대기열에 없는 아이디는 뒤에 그대로 둔다."""
+    import queue_order
+    byid = {x['id']: x for x in q}
+    known = [r for r in revs if r in byid]
+    rest = [r for r in revs if r not in byid]
+    try:
+        rows = queue_order.ordered([byid[r] for r in known])
+    except Exception:
+        rows = [(False, x) for x in sorted((byid[r] for r in known), key=lambda x: x['created_at'])]
+    return [x['id'] for _, x in rows] + rest
+
+
 def main():
     a = sys.argv[1:]
     opt = lambda k, d=None: a[a.index(k) + 1] if k in a else d
@@ -309,8 +324,10 @@ def main():
     registry = video_policy.register_items([x for x in q if isinstance(x.get('payload'), dict)])
     skip = {opt('--queue'), opt('--limit'), opt('--webhook'), opt('--jobs'), opt('--downloads')}
     revs = [x for x in a if not x.startswith('--') and x not in skip]
+    if '--keep-order' not in a:
+        revs = review_order(q, revs)     # 후원자 줄 먼저, 그다음 제출된 시각 오래된 순(영상 날짜 아님)
     if not revs:
-        revs = [x['id'] for x in q if not x.get('claimed_by_name')][:int(opt('--limit', '1'))]
+        revs = review_order(q, [x['id'] for x in q if not x.get('claimed_by_name')])[:int(opt('--limit', '1'))]
         # 길이가 20분을 넘어 기다리던 건이 두 번째 기록을 만나 분석할 수 있게 됐으면 앞에 둔다
         ready = [rid for rid, rec in registry['submissions'].items()
                  if video_policy.eligible(rec, registry) and any(x['id'] == rid for x in q) and rid not in revs]

@@ -6,6 +6,14 @@
   YTDLP           yt-dlp 실행 파일(기본: PATH 의 yt-dlp, 없으면 사용자 Python Scripts 폴더의 것)"""
 import os, sys, shutil, sysconfig
 
+# 윈도 기본 코드페이지(cp949)로 한글 · 중국어 · 「•」 같은 글자를 찍다가 도구가 죽는 일이 잦았다(run_queue · mod_api · 디스코드 글 출력).
+# 모든 도구가 이 파일을 가져가므로 여기서 표준 출력 · 오류를 utf-8 로 바꾼다. 못 바꾸는 환경(파이프가 아닌 경우 등)은 그대로 둔다
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 ROOT = os.environ.get('REVIEWBOT_ROOT') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNS = os.path.join(ROOT, 'runs')          # 건마다 영상 · 중간 결과 · 판정
 WORK = os.path.join(ROOT, 'work')          # 대기열 파일 등
