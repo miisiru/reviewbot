@@ -221,7 +221,9 @@ def which_tab(pale, gold):
     """켜진 탭. 옅은 금색 몫이 가장 큰 줄(0.3 이상, 둘째보다 0.2 이상). 결정이 안 나면 금색 하이라이트(아이콘+글자)가 뚜렷한 줄."""
     v = [p if p is not None else 0.0 for p in pale]
     k = int(np.argmax(v))
-    if v[k] >= 0.3 and v[k] - sorted(v)[-2] >= 0.2:
+    # 둘째 줄과의 격차는 0.12 로 본다. 탭을 빠르게 넘기면 켜진 탭의 하이라이트가 옅게 뜨고(최고 0.5) 막 꺼진 줄의 잔광이 0.2 쯤 남아
+    # 0.2 격차를 못 채운다(rev_1hxsxru 498.1~498.3초: 로빈 광추 화면 0.3초가 통째로 「탭 없음」이 되어 「광추 중첩 미표시」 오거절)
+    if v[k] >= 0.3 and v[k] - sorted(v)[-2] >= 0.12:
         return TABS[k]
     k = int(np.argmax(gold))
     if gold[k] >= 0.008 and gold[k] >= 3 * sorted(gold)[-2] + 0.003:

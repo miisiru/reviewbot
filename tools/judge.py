@@ -35,9 +35,21 @@ def ocr(img, model):
 EXPECT_UID = None     # auto_judge 가 전투 화면에서 읽은 제출 계정 UID. 쇼케이스 화면의 UID 가 이것과 크게 다르면 다른 계정의 화면이라 증거로 쓰지 않는다
 
 
+def _lev(a, b):
+    """편집거리(글자 하나 넣기 · 빼기 · 바꾸기)."""
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        cur = [i]
+        for j, y in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y)))
+        prev = cur
+    return prev[-1]
+
+
 def _uid_close(a, b):
-    """UID 두 개가 같거나 OCR 오독 한두 글자 차이인가(자리 수가 다르면 다른 UID)."""
-    return len(a) == len(b) and sum(x != y for x, y in zip(a, b)) <= 2
+    """UID 두 개가 같거나 OCR 오독 몇 글자 차이인가. 저해상도 영상에서는 앞뒤에 글자가 붙거나 빠져 자리 수가 달라져도 같은 UID 다
+    (rev_1hxsxru: 154762314 가 「1105476231」로 읽혀 정상 광추 프레임이 버려짐). 편집거리 4 이하면 같은 것으로 본다."""
+    return _lev(a, b) <= 4
 
 
 def frame_uid(path):
@@ -57,23 +69,27 @@ def frame_uid(path):
 
 def only_expected_uid(frames, rev=''):
     """한 영상의 쇼케이스에 다른 계정의 캐릭터 화면이 이어 붙는 일이 있다(rev_emf8hf: 제출 계정 12명 뒤에 두 계정의 화면). 같은 캐릭터 화면이
-    둘이면 나중 것을 골라 다른 계정의 성혼을 읽었다. 전투 화면 UID(EXPECT_UID)와 다른 UID 가 읽힌 프레임은 뺀다. 먼저 고르게 8장만 읽어 모두 맞으면
-    (보통) 나머지는 읽지 않는다. UID 를 못 읽은 프레임은 그대로 둔다."""
+    둘이면 나중 것을 골라 다른 계정의 성혼을 읽었다. 그래서 전투 화면 UID(EXPECT_UID)와 확실히 다른 UID 가 읽힌 프레임은 뺀다.
+    다만 UID 숫자는 저해상도에서 쉽게 틀리게 읽힌다. 틀린 읽기로 정상 프레임을 버리면 「광추 · 성혼 미표시」 오거절이 나므로,
+    (1) 편집거리가 5 이상 크게 다르고 (2) 같은 다른 UID 로 읽힌 프레임이 2장 이상일 때만 다른 계정으로 본다. 그 밖에는 모두 둔다."""
     if not EXPECT_UID or not frames:
         return frames
     step = max(1, len(frames) // 8)
     sample = [frame_uid(f['path']) for f in frames[::step]]
-    if all(u is None or _uid_close(u, EXPECT_UID) for u in sample):
+    if all(u is None or _lev(u, EXPECT_UID) < 5 for u in sample):
         return frames
-    kept, dropped = [], 0
+    uids = []
     for f in frames:
         u = frame_uid(f['path'])
         f['uid'] = u
-        if u is not None and not _uid_close(u, EXPECT_UID):
-            dropped += 1
-            continue
-        kept.append(f)
-    print(f'{rev}: dropped {dropped} showcase frames with another UID (expected {EXPECT_UID}); kept {len(kept)}', flush=True)
+        uids.append(u)
+    far = [u for u in uids if u is not None and _lev(u, EXPECT_UID) >= 5]
+    foreign = {u for u in far if sum(1 for v in far if _lev(u, v) <= 3) >= 2}
+    if not foreign:
+        print(f'{rev}: UID read differs on {len(far)} showcase frame(s) but not consistently; kept all {len(frames)}', flush=True)
+        return frames
+    kept = [f for f, u in zip(frames, uids) if u is None or not any(_lev(u, x) <= 3 for x in foreign)]
+    print(f'{rev}: dropped {len(frames) - len(kept)} showcase frames with another UID (expected {EXPECT_UID}); kept {len(kept)}', flush=True)
     return kept
 
 
