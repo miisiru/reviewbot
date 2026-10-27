@@ -118,16 +118,15 @@ def download(u, v):
                 return log + f"\nERROR: download too slow (gave up after {DL_TIMEOUT // 60} min)\n"
             log += p.stdout + (p.stderr or "")[-1000:]
             out = p.stdout
-            if not os.path.exists(v) and ("youtube.com" in u.lower() or "youtu.be" in u.lower())                     and re.search(r"not available|unplayable|unavailable", p.stderr or "", re.I):
+            if not os.path.exists(v) and ("youtube.com" in u.lower() or "youtu.be" in u.lower()) \
+                    and re.search(r"not available|unplayable|unavailable", p.stderr or "", re.I):
                 # 브라우저에서는 열리는데 yt-dlp 기본 방식만 「This video is not available」로 막히는 영상이 있다(rev_1dn1x3l).
                 # android 클라이언트로 한 번 더 시도해 보고, 그래도 안 되면 그때 못 받은 것으로 본다
                 p = subprocess.run([YT, *YT_COOKIES, "-q", "--no-progress", "--extractor-args", "youtube:player_client=android", "--retries", "20",
                                     "--ffmpeg-location", FF, "--no-playlist", "-f", fmt, "--merge-output-format", "mp4", "-o", v,
                                     "--print", "%(duration)s|%(title)s", "--no-simulate", u],
                                    capture_output=True, text=True, encoding="utf8", errors="replace", timeout=DL_TIMEOUT)
-                log += "
-(retry with android client)
-" + p.stdout + (p.stderr or "")[-600:]
+                log += "\n(retry with android client)\n" + p.stdout + (p.stderr or "")[-600:]
                 out = p.stdout or out
             if chunk and "403" in (p.stderr or ""):
                 # 유튜브가 조각 요청 도중 403 을 주면 파일이 앞부분만 남는다(rev_1akuol5 17%) → 조각 없이 다시
