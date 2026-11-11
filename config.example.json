@@ -1,7 +1,8 @@
 {
  "discord_webhook": "https://discord.com/api/webhooks/... (검토 보고용)",
  "question_webhook": "https://discord.com/api/webhooks/... (질문 · 시험 결과용)",
- "mod_token": "Supabase access token (Bearer)",
+ "bot_key": "tga_bot_... (봇 API 키. 있으면 이것만 쓴다. 환경 변수 THEHERTA_BOT_KEY 도 된다)",
+ "mod_token": "(예전 방식) Supabase access token (Bearer)",
  "mod_refresh_token": "Supabase refresh token",
  "supabase_url": "https://<project>.supabase.co",
  "supabase_anon_key": "사이트가 쓰는 공개 anon 키",
