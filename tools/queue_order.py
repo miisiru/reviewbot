@@ -20,6 +20,9 @@ def donor_names():
 
 def author(item):
     a = (item.get('author_name') or '').strip()
+    if not a:       # 봇 API 의 항목은 맨 위에 작성자가 없고 payload 안에 있다(여럿이면 첫 런)
+        pl = item.get('payload') or {}
+        a = ((pl.get('runs') or [pl])[0].get('author_name') or '').strip()
     if not a:
         for it in item.get('submission_review_items') or []:
             a = ((it.get('payload') or {}).get('author_name') or '').strip()
