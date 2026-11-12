@@ -189,8 +189,7 @@ def drop(rev):
 def log_result(rev, res, secs=0):
     with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
         f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
-                            'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '
-')
+                            'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '\n')
 
 
 def leave_note(rev, item, res):
