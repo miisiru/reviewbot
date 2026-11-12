@@ -536,6 +536,8 @@ def run(rev, do_gp=True, reuse=False):
                 ded('eidolon_gray', f"{name}: {uncertain_eidolons(c)} uncertain (locked or not)", abs(c['e_seen'] - c['e_alt']))
             # 빨간 「!」(활성화 가능, 아직 안 켬)는 활성화 안 한 것으로 세고 감점하지 않는다(사용자, 2026-10-09: 정상 상태)
             # 기연 성혼(4.7): 제출과 화면이 어긋나도 거절하지 않고 사람이 보게 한다(조각 감지는 아직 두 건에서만 확인)
+            if c.get('ex_seen') is None and c.get('ex') and c.get('ex_score') is not None:
+                out['check_reasons'].append(f"{name}: Affinitive Eidolon submitted, but the shard on the Eidolon page is unclear (score {c.get('ex_score')})")
             if c.get('ex_seen') is not None and bool(c.get('ex_seen')) != bool(c.get('ex')):
                 out['check_reasons'].append(
                     f"{name}: Affinitive Eidolon " + ('submitted but not seen on the Eidolon page' if c.get('ex') else 'seen on the Eidolon page but not submitted')

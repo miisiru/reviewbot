@@ -157,6 +157,8 @@ def prefetch(rev, item, d):
 LEASES = {}      # rev → coord.Lease (이 프로세스가 잡고 있는 건)
 
 
+CLAIMED_BY_OTHERS = set()
+POLL = [0.0]
 LIMIT = [None, 0]   # [건을 지정하지 않았을 때의 --limit, 지금까지 잡은 수]
 
 
@@ -166,12 +168,26 @@ def take(rev, item, q_free=True):
     import coord
     if LIMIT[0] is not None and LIMIT[1] >= LIMIT[0]:
         return False
+    # 다른 봇이 한꺼번에 많이 잡아 가면 건마다 걸었다 풀며 부딪치지 않도록, 건너뛰기가 나오면 대기열을 새로 받아(1분에 한 번) 남이 잡은 건은 API 를 부르지 않고 넘긴다
+    if rev in CLAIMED_BY_OTHERS:
+        print(f'{rev}: skipped (claimed by someone else, from a fresh queue)', flush=True)
+        return False
     lease = coord.Lease(rev, enabled='--no-claim' not in sys.argv)
     if lease.acquire(listed_free=not item.get('claimed_by_name')):
         LEASES[rev] = lease
         LIMIT[1] += 1
         return True
     print(f'{rev}: skipped ({lease.why})', flush=True)
+    if (lease.why or '').startswith('claimed by') and time.time() - POLL[0] > 60:
+        POLL[0] = time.time()
+        try:
+            import mod_api
+            items, _ = mod_api.queue(os.path.join(WORK, 'queue_poll.json'))
+            me = coord.my_name()
+            CLAIMED_BY_OTHERS.update(x['id'] for x in items if coord.names_of(x.get('claimed_by_name')) - {me})
+            CLAIMED_BY_OTHERS.difference_update(x['id'] for x in items if not (coord.names_of(x.get('claimed_by_name')) - {me}))
+        except SystemExit:
+            pass
     return False
 
 

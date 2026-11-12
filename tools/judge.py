@@ -464,7 +464,8 @@ def affinitive_score(img):
     return float(((hsv[..., 0] >= 115) & (hsv[..., 0] <= 150) & (hsv[..., 1] > 110) & (hsv[..., 2] > 130)).mean())
 
 
-AFFINITIVE_MIN = 0.15
+AFFINITIVE_MIN = 0.28      # 받은 화면 0.33~0.42. 6성혼 열린 페이지의 보라 그림이 0.15 까지 나온다(rev_8lequd 키레네) → 0.12~0.28 은 가리지 않음(None)
+AFFINITIVE_MAX_NO = 0.12
 
 # 4.7: 1511(Aeon ★ Aha)은 6성혼을 열면 성혼 페이지가 구슬 모양 별도 UI 로 바뀐다(자물쇠 · 조각 없음, 구슬 1~5 옆에 파란 번호표, 가운데 아래 큰 구슬).
 # 6성혼 미만 · UI 를 끈 화면은 보통 조각 + 자물쇠 모양이라 기존 판독 그대로다. 번호표 자리(1280x720 기준)의 파란 비율로 가른다
@@ -1626,7 +1627,7 @@ def judge(rev, build_indices=None):
             imgs = [cv2.imread(f['path']) for f in eif if f.get('path')]
             orb_any = any(orb_ui_score(i) >= ORB_MIN for i in imgs)
             r['ex_score'] = round(max((affinitive_score(i) for i in imgs), default=0.0), 3)
-            r['ex_seen'] = None if orb_any else r['ex_score'] >= AFFINITIVE_MIN
+            r['ex_seen'] = None if orb_any else (True if r['ex_score'] >= AFFINITIVE_MIN else False if r['ex_score'] < AFFINITIVE_MAX_NO else None)
             if r['e_uncertain']:
                 r['e_seen'] = None
                 r['e_alt'] = None
