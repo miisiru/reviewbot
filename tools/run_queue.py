@@ -4,7 +4,8 @@
 python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N] [--claim] [--webhook question|review]
   rev_id 를 주지 않으면 대기열에서 아무도 잡지 않은 건을 오래된 순으로 --limit 개(기본 1)
   --fetch    먼저 mod_api.py queue 로 대기열을 새로 받는다
-  --claim    판정 전에 「검토 중」 표시(mod_api.py claim)
+  (검토 중 표시는 언제나 건다: 영상을 받기 전에 잡고, 남이 잡았거나 사라졌으면 건너뛴다 — tools/coord.py 머리글. 끄려면 --no-claim)
+  --shard i/n  여러 컴퓨터가 나눠 맡을 때 이 컴퓨터 몫(건 아이디 해시)만. config.json 의 "shard" 도 된다
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
   --keep-order  받은 순서 그대로(기본은 후원자 먼저 + 제출 시각 오래된 순, tools/queue_order.py)
   --no-note       봇 메모를 남기지 않는다(시험 · 재분석용)
@@ -152,28 +153,36 @@ def prefetch(rev, item, d):
     open(os.path.join(d, 'prefetch.log'), 'w', encoding='utf8').write(r.stdout + r.stderr[-2000:])
 
 
-class Heartbeat:
-    """검토 중 표시(봇 키는 ttl 최대 600초)를 판정이 끝날 때까지 4분마다 다시 건다. with 로 쓴다."""
-    def __init__(self, rev, on):
-        import threading
-        self.rev, self.on, self.stop = rev, on, threading.Event()
-        self.t = threading.Thread(target=self.loop, daemon=True)
+LEASES = {}      # rev → coord.Lease (이 프로세스가 잡고 있는 건)
 
-    def loop(self):
-        while not self.stop.wait(240):
-            sh([os.path.join(HERE, 'mod_api.py'), 'claim', self.rev])
 
-    def __enter__(self):
-        if self.on:
-            sh([os.path.join(HERE, 'mod_api.py'), 'claim', self.rev])
-            self.t.start()
-        return self
+LIMIT = [None, 0]   # [건을 지정하지 않았을 때의 --limit, 지금까지 잡은 수]
 
-    def __exit__(self, *exc):
-        self.stop.set()
-        if self.on:
-            sh([os.path.join(HERE, 'mod_api.py'), 'release', self.rev])
+
+def take(rev, item, q_free=True):
+    """건을 잡는다(coord.Lease). 못 잡으면 False 와 이유를 찍는다. --no-claim 이면 표시 없이 같은 컴퓨터 잠금만.
+    건을 지정하지 않았을 때는 후보를 넉넉히 늘어놓고 --limit 개를 잡을 때까지 차례로 시도한다(남이 잡은 건은 건너뛰고 다음 후보로)."""
+    import coord
+    if LIMIT[0] is not None and LIMIT[1] >= LIMIT[0]:
         return False
+    lease = coord.Lease(rev, enabled='--no-claim' not in sys.argv)
+    if lease.acquire(listed_free=not item.get('claimed_by_name')):
+        LEASES[rev] = lease
+        LIMIT[1] += 1
+        return True
+    print(f'{rev}: skipped ({lease.why})', flush=True)
+    return False
+
+
+def still_mine(rev):
+    lease = LEASES.get(rev)
+    return True if lease is None else lease.ok()
+
+
+def drop(rev):
+    lease = LEASES.pop(rev, None)
+    if lease:
+        lease.release()
 
 
 def leave_note(rev, item, res):
@@ -204,8 +213,12 @@ def finish(rev, item, d, res, secs, wh):
     send(wh, embed, d, rev)
     if wh and res['confidence'] <= 80:               # 확신도 80 이하는 질문 채널에도
         send('question', embed, d, rev)
-    leave_note(rev, item, res)                       # 결정보다 먼저 메모(카드에 판정 · 근거가 남는다)
-    approve_if_clear(rev, item, res)
+    if still_mine(rev):
+        leave_note(rev, item, res)                   # 결정보다 먼저 메모(카드에 판정 · 근거가 남는다)
+        approve_if_clear(rev, item, res)
+    else:
+        print(f'{rev}: note and decision not sent (lost the review)', flush=True)
+    drop(rev)
 
 
 def approve_if_clear(rev, item, res):
@@ -214,6 +227,9 @@ def approve_if_clear(rev, item, res):
         return
     pl = item.get('payload') or {}
     if res['verdict'] != 'APPROVE' or res['confidence'] < 90 or item.get('kind') != 'single' or len(pl.get('runs') or [1]) > 1:
+        return
+    if not still_mine(rev):
+        print(f'{rev}: approve not sent (the review is no longer ours or was already decided)', flush=True)
         return
     out = sh([os.path.join(HERE, 'mod_api.py'), 'decide', rev, 'approve', '--yes'])
     ok = out.returncode == 0
@@ -242,11 +258,14 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
         d = os.path.join(RUNS, rev)
         why = gate_reason(rev, item, q, legacy)
         if why:                                   # 곧바로 CHECK 인 건은 분석 없이 바로 보고
+            if not take(rev, item):
+                continue
             res = write_check(d, rev, item, why)
             DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
             leave_note(rev, item, res)            # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
+            drop(rev)
         else:
             todo.append(rev)
     ex_dl = ThreadPoolExecutor(max(1, downloads))
@@ -261,11 +280,10 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
         d = os.path.join(RUNS, rev)
         os.makedirs(d, exist_ok=True)
         log = open(os.path.join(d, 'worker.log'), 'w', encoding='utf8')
-        with Heartbeat(rev, claim):
-            p = sp.Popen([PY, '-u', os.path.abspath(__file__), '--worker', rev, '--queue', qf],
-                         stdout=log, stderr=sp.STDOUT, env=ENV)
-            procs[rev] = p
-            p.wait()
+        p = sp.Popen([PY, '-u', os.path.abspath(__file__), '--worker', rev, '--queue', qf],
+                     stdout=log, stderr=sp.STDOUT, env=ENV)
+        procs[rev] = p
+        p.wait()
         log.close()
         ap = os.path.join(d, 'auto.json')
         res = json.load(open(ap, encoding='utf8')) if p.returncode == 0 and os.path.exists(ap) else None
@@ -282,11 +300,15 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
                     if len(dl) >= downloads:
                         break
                     todo.remove(rev)
+                    if not take(rev, byid[rev]):        # 영상을 받기 전에 먼저 잡는다
+                        continue
                     busy.add(k)
                     print(f'{rev}: downloading', flush=True)
                     dl[ex_dl.submit(prefetch, rev, byid[rev], os.path.join(RUNS, rev))] = rev
                 else:          # 미리 받지 않으면 분석 프로세스가 직접 받는다
                     todo.remove(rev)
+                    if not take(rev, byid[rev]):
+                        continue
                     busy.add(k)
                     ready.append(rev)
             # 분석: 받기가 끝난 건
@@ -312,6 +334,8 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
                     busy.discard(source_key(byid[rev], rev))
                     finish(rev, byid[rev], os.path.join(RUNS, rev), res, secs, wh)
     finally:
+        for rev in list(LEASES):
+            drop(rev)
         for p in procs.values():
             if p.poll() is None:
                 p.terminate()
@@ -360,16 +384,24 @@ def main():
     q = json.load(open(qf, encoding='utf8'))
     legacy = bool(config().get('legacy_gates'))
     registry = video_policy.register_items([x for x in q if isinstance(x.get('payload'), dict)])
-    skip = {opt('--queue'), opt('--limit'), opt('--webhook'), opt('--jobs'), opt('--downloads')}
+    skip = {opt('--queue'), opt('--limit'), opt('--webhook'), opt('--jobs'), opt('--downloads'), opt('--shard')}
     revs = [x for x in a if not x.startswith('--') and x not in skip]
     if '--keep-order' not in a:
         revs = review_order(q, revs)     # 후원자 줄 먼저, 그다음 제출된 시각 오래된 순(영상 날짜 아님)
     if not revs:
-        revs = review_order(q, [x['id'] for x in q if not x.get('claimed_by_name')])[:int(opt('--limit', '1'))]
+        shard0 = opt('--shard') or config().get('shard')
+        import coord as _c
+        revs = review_order(q, [x['id'] for x in q if not x.get('claimed_by_name') and _c.in_shard(x['id'], shard0)])
+        LIMIT[0] = int(opt('--limit', '1'))
         # 길이가 20분을 넘어 기다리던 건이 두 번째 기록을 만나 분석할 수 있게 됐으면 앞에 둔다
         ready = [rid for rid, rec in registry['submissions'].items()
                  if video_policy.eligible(rec, registry) and any(x['id'] == rid for x in q) and rid not in revs]
-        revs = ready + revs
+        revs = [r for r in ready if r not in revs] + revs
+    # 여러 컴퓨터가 나눠 맡을 때: 이 컴퓨터 몫(건 아이디 해시)만(coord.py 머리글)
+    import coord
+    shard = opt('--shard') or config().get('shard')
+    if shard:
+        revs = [r for r in revs if coord.in_shard(r, shard)]
     byid = {x['id']: x for x in q}
     os.makedirs(WORK, exist_ok=True)
     # 여러 건이면 기본이 병렬(분석 2건 + 영상 미리 받기 2건). 한 건씩 하려면 --jobs 1 --downloads 0, 기본값은 config.json 의 jobs · downloads 로 바꾼다
@@ -387,17 +419,21 @@ def main():
         t0 = time.time()
         item = byid[rev]
         d = os.path.join(RUNS, rev)
-        why_skip = gate_reason(rev, item, q, legacy)
-        if why_skip:
-            res = write_check(d, rev, item, why_skip)
-            DONE.append(rev)
-            embed = report(rev, res, item)
-            print(as_text(embed), flush=True)
-            leave_note(rev, item, res)            # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
+        if not take(rev, item):
             continue
-        with Heartbeat(rev, '--claim' in a):
+        try:
+            why_skip = gate_reason(rev, item, q, legacy)
+            if why_skip:
+                res = write_check(d, rev, item, why_skip)
+                DONE.append(rev)
+                embed = report(rev, res, item)
+                print(as_text(embed), flush=True)
+                leave_note(rev, item, res)        # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
+                continue
             res = run_item(rev, item, d)
-        finish(rev, item, d, res, time.time() - t0, wh)
+            finish(rev, item, d, res, time.time() - t0, wh)
+        finally:
+            drop(rev)                              # finish 가 이미 풀었으면 아무 일도 없다
     summarize(started)
 
 

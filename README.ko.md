@@ -441,3 +441,12 @@ theherta.com 기록 목록(archive)을 따릅니다(`ui_theme/site.css` 는 그 
 - OCR 모델: [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5(Apache-2.0)의 ONNX 변환
   [monkt/paddleocr-onnx](https://huggingface.co/monkt/paddleocr-onnx)
 - 게임 글: 붕괴: 스타레일 © HoYoverse, [Dimbreath](https://github.com/DimbreathBot/TurnBasedGameData) 덤프
+
+## 여러 컴퓨터가 같은 대기열을 검토할 때
+
+`tools/coord.py` 머리글에 규칙이 있다. 요약:
+
+- 건을 영상 받기 전에 잡는다. 서버의 「검토 중」 표시를 걸고, 응답이 404(이미 결정됨)이거나 남의 이름이 보이면 건너뛴다. 1.5~3.5초 뒤에 한 번 더 걸어 그 사이 남이 걸었는지 확인한다.
+- 판정하는 동안 4분마다 다시 걸고, 승인 · 거절 · 메모를 보내기 직전에 한 번 더 확인한다. 잃었으면 보내지 않는다.
+- 같은 컴퓨터에서 run_queue 를 두 번 띄워도 `work/locks/` 파일 잠금으로 같은 건을 잡지 않는다.
+- 컴퓨터마다 봇 키를 따로 받는다(이름이 달라야 서로를 알아본다). 같은 키를 함께 써야 하면 `config.json` 의 `"shard": "0/2"`(또는 `--shard 0/2`)로 건 아이디 해시로 몫을 나눈다.

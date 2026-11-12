@@ -517,3 +517,7 @@ these problems appear. They are listed so that they are handled before it is use
 - OCR models: ONNX conversion [monkt/paddleocr-onnx](https://huggingface.co/monkt/paddleocr-onnx) of
   [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 (Apache-2.0)
 - Game text: Honkai: Star Rail © HoYoverse, from the [Dimbreath](https://github.com/DimbreathBot/TurnBasedGameData) dump
+
+## Several machines on one queue
+
+The rules are in the header of `tools/coord.py`: claim before downloading (skip on 404 or when another name holds it, then re-claim after 1.5-3.5 s to catch a simultaneous claim), renew every 4 minutes, re-check right before a decision or note, and use a file lock under `work/locks/` for several `run_queue` processes on one machine. Give each machine its own bot key; if machines must share a key, split the queue with `"shard": "0/2"` in `config.json` (or `--shard 0/2`), which assigns each review to one machine by a hash of its id.
