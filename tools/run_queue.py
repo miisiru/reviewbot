@@ -8,6 +8,7 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --shard i/n  여러 컴퓨터가 나눠 맡을 때 이 컴퓨터 몫(건 아이디 해시)만. config.json 의 "shard" 도 된다
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
   --keep-order  받은 순서 그대로(기본은 후원자 먼저 + 제출 시각 오래된 순, tools/queue_order.py)
+  --redo          건을 지정하지 않을 때도 이미 판정한 건(work/results.jsonl)을 다시 돈다
   --no-note       봇 메모를 남기지 않는다(시험 · 재분석용)
   --no-summary  끝에 만드는 요약 HTML(work/summary_<시각>.html, 사이트 모양)을 만들지 않는다
   --jobs N        한꺼번에 분석할 건 수(건마다 따로 프로세스). 기본: 여러 건이면 2, 한 건이면 1(config.json 의 jobs)
@@ -391,7 +392,16 @@ def main():
     if not revs:
         shard0 = opt('--shard') or config().get('shard')
         import coord as _c
-        revs = review_order(q, [x['id'] for x in q if not x.get('claimed_by_name') and _c.in_shard(x['id'], shard0)])
+        done_before = set()
+        rp = os.path.join(WORK, 'results.jsonl')
+        if os.path.exists(rp) and '--redo' not in a:      # 이미 판정해 사람 확인을 기다리는 건(CHECK 등)을 같은 판에서 다시 돌지 않는다
+            for line in open(rp, encoding='utf8'):
+                try:
+                    done_before.add(json.loads(line)['rev'])
+                except (ValueError, KeyError):
+                    pass
+        revs = review_order(q, [x['id'] for x in q if not x.get('claimed_by_name') and x['id'] not in done_before
+                                and _c.in_shard(x['id'], shard0)])
         LIMIT[0] = int(opt('--limit', '1'))
         # 길이가 20분을 넘어 기다리던 건이 두 번째 기록을 만나 분석할 수 있게 됐으면 앞에 둔다
         ready = [rid for rid, rec in registry['submissions'].items()
