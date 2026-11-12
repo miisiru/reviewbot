@@ -1,7 +1,7 @@
 """판정 결과를 봇 메모(POST /api/bot/reviews/<id>/notes)로 남긴다. 판정이 끝날 때 한 번만(카드에는 가장 새 것 하나만 보인다).
 
 verdict: APPROVE → approve, REJECT → reject, CHECK → check. 사유 · 증거는 보고(report.py)와 같은 내용을 짧게.
-증거 그림(쇼케이스 시트 · 전투 시트)은 imgur 에 올려 image_url 로 붙인다(imgur_client_id 가 없으면 그림 없이).
+증거 그림(쇼케이스 시트 · 전투 시트)은 imgbb 에 올려 image_url 로 붙인다(imgbb_key 가 없으면 그림 없이).
 봇 키가 없으면 아무것도 하지 않는다(예전 세션 토큰 방식은 메모가 없다).
 
 python bot_note.py <rev_id> [--dry]     runs/<rev>/auto.json 과 work/queue.json 으로 메모를 만들어 보낸다(--dry 는 보내지 않고 보인다)"""
@@ -9,7 +9,7 @@ import os, sys, re, json
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from paths import RUNS, WORK   # noqa: E402
-import mod_api, imgur          # noqa: E402
+import mod_api, imgbb           # noqa: E402
 from report import playback_sources, timestamp_link, attach_sheets   # noqa: E402
 
 VERDICT = {'APPROVE': 'approve', 'REJECT': 'reject', 'CHECK': 'check'}
@@ -53,11 +53,11 @@ def build_note(rev, res, item, upload_images=True):
     u = _raw_url(timestamp_link(src['build_online'], sh_t, 'x')) if src['build_online'] and sh_t is not None else None
     if u:
         evidence.append({'label': 'Showcase', 't': int(sh_t), 'url': u})
-    if upload_images and imgur.client_id():
+    if upload_images and imgbb.api_key():
         try:
             payload, files = attach_sheets(os.path.join(RUNS, rev), {})
             for att, f in zip(payload.get('attachments') or [], files):
-                link = imgur.upload(f)
+                link = imgbb.upload(f)
                 if link:
                     evidence.append({'label': att.get('description') or os.path.basename(f), 'image_url': link})
         except Exception as e:      # 그림이 안 올라가도 메모는 간다
