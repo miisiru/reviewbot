@@ -29,7 +29,33 @@ from report import report, as_text, video_key, check_result, attach_sheets   # n
 import video_policy   # noqa: E402
 
 ENV = dict(os.environ, PYTHONIOENCODING='utf8')
+GRID = None
 DONE = []        # 이번에 판정이 난 건(곧바로 CHECK 포함) — 끝에 요약 HTML 로 만든다
+
+
+def queue_notice(message):
+    if GRID:
+        GRID.notice(message)
+    else:
+        print(message, flush=True)
+
+
+def queue_result(rev, res, embed, secs=None, *, skipped=False):
+    if GRID:
+        verdict = res['verdict']
+        if verdict == 'APPROVE':
+            verdict = 'Recommended approval'
+        stage = 'Skipped' if skipped else 'Completed'
+        GRID.set(rev, stage, f"{verdict} ({res['confidence']}%)", done=True)
+    elif secs is None:
+        print(as_text(embed), flush=True)
+    else:
+        print(as_text(embed), f'\n({secs:.0f}s)\n', flush=True)
+
+
+def worker_stage(stage):
+    if os.environ.get('REVIEWBOT_GRID_WORKER') == '1':
+        print(f'QUEUE_STAGE: {stage}', flush=True)
 
 
 def sh(args, **kw):
@@ -85,6 +111,7 @@ def analyze(rev, item, d, env):
     """받기 → 구간 나누기 → 판정. 판정 결과(dict)를 auto.json 에도 쓴다. 분석이 막히면 CHECK(까닭)."""
     pl = item.get('payload') or {}
     run0 = (pl.get('runs') or [pl])[0]
+    worker_stage('Preparing video')
     out = sh([os.path.join(HERE, 'prep.py'), rev], env=env)
     print(out.stdout.strip())
     tl_p = os.path.join(d, 'too_long.json')
@@ -104,15 +131,18 @@ def analyze(rev, item, d, env):
     side = {k: v for k, v in pl.items() if k != 'runs'}
     side.update(run0)
     try:
+        worker_stage('Boundary / showcase scan')
         selection = prepare(Path(d), side, vids)
         try:
             generate(Path(d), vids, selection)
         except (OSError, ValueError, RuntimeError) as exc:
             print(f'{rev}: battle sheets unavailable: {exc}; continuing analysis', flush=True)
+        worker_stage('Extracting showcase frames')
         extract_build(Path(d), vids, selection, env)
     except (OSError, ValueError, KeyError, RuntimeError) as exc:
         # 영상 구간을 못 정했다(타임스탬프가 가리키는 전투가 없다 · 쇼케이스가 애매하다 …): 사람 확인
         return write_check(d, rev, item, str(exc))
+    worker_stage('Judging')
     r = sh([os.path.join(HERE, 'auto_judge.py'), rev], env=env)
     open(os.path.join(d, 'auto_log.txt'), 'w', encoding='utf8').write(r.stdout + r.stderr[-3000:])
     if not os.path.exists(os.path.join(d, 'auto.json')):
@@ -130,7 +160,7 @@ def send(wh, embed, d, rev):
         payload, files = attach_sheets(d, payload)
         post('question_webhook' if wh == 'question' else 'discord_webhook', payload, files=files)
     except Exception as e:
-        print('webhook failed:', e)
+        queue_notice(f'{rev}: webhook failed: {e}')
 
 
 def run_item(rev, item, d):
@@ -170,7 +200,7 @@ def take(rev, item, q_free=True):
         LEASES[rev] = lease
         LIMIT[1] += 1
         return True
-    print(f'{rev}: skipped ({lease.why})', flush=True)
+    queue_notice(f'{rev}: skipped ({lease.why})')
     return False
 
 
@@ -193,20 +223,23 @@ def leave_note(rev, item, res):
         import bot_note
         out = bot_note.post(rev, res, item)
         if out:
-            print(f'{rev}: {out}', flush=True)
+            queue_notice(f'{rev}: {out}')
     except Exception as e:
-        print(f'{rev}: note error: {e}', flush=True)
+        queue_notice(f'{rev}: note error: {e}')
 
 
 def finish(rev, item, d, res, secs, wh):
     """판정이 나온 건을 보고한다(보고 · 기록 · 웹후크는 한 곳에서 차례로 — 병렬이어도 섞이지 않는다)."""
     if res is None:
-        print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
+        if GRID:
+            GRID.set(rev, 'Failed', 'CHECK - see worker or judge log', done=True)
+        else:
+            print(f'{rev}: no verdict (see auto_log.txt)\n', flush=True)
         return
     video_policy.mark_result(item, res)
     DONE.append(rev)
     embed = report(rev, res, item)
-    print(as_text(embed), f'\n({secs:.0f}s)\n', flush=True)
+    queue_result(rev, res, embed, secs)
     with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
         f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
                             'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '\n')
@@ -217,7 +250,7 @@ def finish(rev, item, d, res, secs, wh):
         leave_note(rev, item, res)                   # 결정보다 먼저 메모(카드에 판정 · 근거가 남는다)
         approve_if_clear(rev, item, res)
     else:
-        print(f'{rev}: note and decision not sent (lost the review)', flush=True)
+        queue_notice(f'{rev}: note and decision not sent (lost the review)')
     drop(rev)
 
 
@@ -229,11 +262,14 @@ def approve_if_clear(rev, item, res):
     if res['verdict'] != 'APPROVE' or res['confidence'] < 90 or item.get('kind') != 'single' or len(pl.get('runs') or [1]) > 1:
         return
     if not still_mine(rev):
-        print(f'{rev}: approve not sent (the review is no longer ours or was already decided)', flush=True)
+        queue_notice(f'{rev}: approve not sent (the review is no longer ours or was already decided)')
         return
     out = sh([os.path.join(HERE, 'mod_api.py'), 'decide', rev, 'approve', '--yes'])
     ok = out.returncode == 0
-    print(f'{rev}: site approve {"ok" if ok else "FAILED " + (out.stdout or out.stderr or "")[:200]}', flush=True)
+    if GRID and ok:
+        GRID.set(rev, 'Completed', f"Approved on site ({res['confidence']}%)", done=True)
+    else:
+        queue_notice(f'{rev}: site approve {"ok" if ok else "FAILED " + (out.stdout or out.stderr or "")[:200]}')
     if not ok:
         with open(os.path.join(WORK, 'approve_failed.txt'), 'a', encoding='utf8') as f:
             f.write(rev + '\n')
@@ -263,7 +299,7 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
             res = write_check(d, rev, item, why)
             DONE.append(rev)
             embed = report(rev, res, item)
-            print(as_text(embed), flush=True)
+            queue_result(rev, res, embed, skipped=True)
             leave_note(rev, item, res)            # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
             drop(rev)
         else:
@@ -281,7 +317,8 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
         os.makedirs(d, exist_ok=True)
         log = open(os.path.join(d, 'worker.log'), 'w', encoding='utf8')
         p = sp.Popen([PY, '-u', os.path.abspath(__file__), '--worker', rev, '--queue', qf],
-                     stdout=log, stderr=sp.STDOUT, env=ENV)
+                     stdout=log, stderr=sp.STDOUT,
+                     env=dict(ENV, REVIEWBOT_GRID_WORKER='1') if GRID else ENV)
         procs[rev] = p
         p.wait()
         log.close()
@@ -303,7 +340,10 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
                     if not take(rev, byid[rev]):        # 영상을 받기 전에 먼저 잡는다
                         continue
                     busy.add(k)
-                    print(f'{rev}: downloading', flush=True)
+                    if GRID:
+                        GRID.set(rev, 'Downloading')
+                    else:
+                        print(f'{rev}: downloading', flush=True)
                     dl[ex_dl.submit(prefetch, rev, byid[rev], os.path.join(RUNS, rev))] = rev
                 else:          # 미리 받지 않으면 분석 프로세스가 직접 받는다
                     todo.remove(rev)
@@ -314,19 +354,27 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
             # 분석: 받기가 끝난 건
             while ready and len(run) < jobs:
                 rev = ready.popleft()
-                print(f'{rev}: analyzing', flush=True)
+                if GRID:
+                    GRID.set(rev, 'Starting analysis')
+                else:
+                    print(f'{rev}: analyzing', flush=True)
                 run[ex_run.submit(work, rev)] = rev
             pending = set(dl) | set(run)
             if not pending:
                 continue
-            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            done, _ = wait(pending, timeout=1 if GRID else None, return_when=FIRST_COMPLETED)
+            if GRID:
+                for rev in run.values():
+                    GRID.poll(rev, os.path.join(RUNS, rev))
             for fut in done:
                 if fut in dl:
                     rev = dl.pop(fut)
                     try:
                         fut.result()
                     except Exception as e:
-                        print(f'{rev}: download step failed: {e}', flush=True)
+                        queue_notice(f'{rev}: download step failed: {e}')
+                    if GRID:
+                        GRID.set(rev, 'Waiting for analysis')
                     ready.append(rev)
                 else:
                     rev = run.pop(fut)
@@ -411,7 +459,11 @@ def main():
     downloads = int(opt('--downloads', str(cfg.get('downloads', 2 if many else 0))))
     wh = opt('--webhook')
     started = time.time()
-    if jobs > 1 or downloads > 0:
+    global GRID
+    if '--grid' in a or '--grid-links' in a:
+        from queue_grid import QueueGrid
+        GRID = QueueGrid(links='--grid-links' in a)
+    if GRID or jobs > 1 or downloads > 0:
         run_parallel(revs, byid, q, legacy, jobs, downloads, '--claim' in a, wh, qf)
         summarize(started)
         return
@@ -427,7 +479,7 @@ def main():
                 res = write_check(d, rev, item, why_skip)
                 DONE.append(rev)
                 embed = report(rev, res, item)
-                print(as_text(embed), flush=True)
+                queue_result(rev, res, embed, skipped=True)
                 leave_note(rev, item, res)        # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
                 continue
             res = run_item(rev, item, d)
