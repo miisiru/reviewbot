@@ -7,6 +7,7 @@ python run_queue.py [rev_id ...] [--queue work/queue.json] [--fetch] [--limit N]
   --claim    판정 전에 「검토 중」 표시(mod_api.py claim)
   --webhook  결과를 디스코드로(question = config 의 question_webhook, review = discord_webhook)
   --keep-order  받은 순서 그대로(기본은 후원자 먼저 + 제출 시각 오래된 순, tools/queue_order.py)
+  --no-note       봇 메모를 남기지 않는다(시험 · 재분석용)
   --no-summary  끝에 만드는 요약 HTML(work/summary_<시각>.html, 사이트 모양)을 만들지 않는다
   --jobs N        한꺼번에 분석할 건 수(건마다 따로 프로세스). 기본: 여러 건이면 2, 한 건이면 1(config.json 의 jobs)
   --downloads M   분석 자리를 기다리는 건들의 영상을 미리 받는 수. 기본: 여러 건이면 2, 한 건이면 0(config.json 의 downloads)
@@ -177,6 +178,8 @@ class Heartbeat:
 
 def leave_note(rev, item, res):
     """판정(CHECK 포함)을 봇 메모로 남긴다. 봇 키가 없으면 건너뛴다. 실패해도 흐름은 계속."""
+    if '--no-note' in sys.argv:
+        return
     try:
         import bot_note
         out = bot_note.post(rev, res, item)

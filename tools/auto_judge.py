@@ -535,7 +535,12 @@ def run(rev, do_gp=True, reuse=False):
             if c.get('e_alt') is not None:
                 ded('eidolon_gray', f"{name}: {uncertain_eidolons(c)} uncertain (locked or not)", abs(c['e_seen'] - c['e_alt']))
             # 빨간 「!」(활성화 가능, 아직 안 켬)는 활성화 안 한 것으로 세고 감점하지 않는다(사용자, 2026-10-09: 정상 상태)
-    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t', 'e_uncertain', 'e_uncertainty_reasons', 'e_candidates', 'e_retry', 'lc_uncertain', 's_uncertain', 'lc_retry')}
+            # 기연 성혼(4.7): 제출과 화면이 어긋나도 거절하지 않고 사람이 보게 한다(조각 감지는 아직 두 건에서만 확인)
+            if c.get('ex_seen') is not None and bool(c.get('ex_seen')) != bool(c.get('ex')):
+                out['check_reasons'].append(
+                    f"{name}: Affinitive Eidolon " + ('submitted but not seen on the Eidolon page' if c.get('ex') else 'seen on the Eidolon page but not submitted')
+                    + f" (shard score {c.get('ex_score')})")
+    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t', 'e_uncertain', 'e_uncertainty_reasons', 'e_candidates', 'e_retry', 'lc_uncertain', 's_uncertain', 'lc_retry', 'ex', 'ex_seen', 'ex_score')}
                     for c in b['chars']]
     tm('build')
     # 2) UID

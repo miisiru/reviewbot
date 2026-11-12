@@ -454,6 +454,19 @@ def ready_node(frame, k):
     return bool(g and k and k - 1 < len(g) and g[k - 1] is not None and g[k - 1] >= GLOW_MIN)
 
 
+def affinitive_score(img):
+    """4.7 기연 성혼(Affinitive Eidolon): 받은 캐릭터의 성혼 페이지에는 노드 1 왼쪽 위에 보라 · 파랑으로 빛나는 조각이 따로 나온다.
+    그 자리(가로 18~45% · 세로 17~42%)의 보라 · 파랑 픽셀 비율 — 받은 화면 0.33~0.42, 아닌 화면은 0.02 이하(rev_14hu0sd · rev_84obvn)."""
+    if img is None:
+        return 0.0
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img[int(h * .17):int(h * .42), int(w * .18):int(w * .45)], cv2.COLOR_BGR2HSV)
+    return float(((hsv[..., 0] >= 115) & (hsv[..., 0] <= 150) & (hsv[..., 1] > 110) & (hsv[..., 2] > 130)).mean())
+
+
+AFFINITIVE_MIN = 0.15
+
+
 def eidolon_evidence(frame):
     """Assess lock evidence without using the submitted Eidolon count. 노드 아이콘 점수(frame['icon_scores'])가 있으면 함께 쓴다."""
     scores = frame.get('lock_scores') or []
@@ -1085,7 +1098,7 @@ def judge(rev, build_indices=None):
         for i in range(1, 5):
             c = s.get(f'p{i}_char')
             if c:
-                chars.append({'char': c, 'lc': s.get(f'p{i}_lc'), 'e': s.get(f'p{i}_eidolon'), 's': s.get(f'p{i}_superimp')})
+                chars.append({'char': c, 'lc': s.get(f'p{i}_lc'), 'e': s.get(f'p{i}_eidolon'), 's': s.get(f'p{i}_superimp'), 'ex': bool(s.get(f'p{i}_ex'))})
     frames = []
     for vi in range(len(vids)):
         lays = layout_of(rev, vi) if os.path.exists(os.path.join(d, f'tabs{vi}', 'timeline.txt')) else []
@@ -1438,7 +1451,7 @@ def judge(rev, build_indices=None):
     for k, c in enumerate(chars):
         lcf = [f for f in frames if f['tab'] == 'LightCone' and f.get('char_k') == k]
         eif = [f for f in frames if f['tab'] == 'Eidolon' and f.get('char_k') == k]
-        r = {'char': c['char'], 'submitted': {'lc': c['lc'], 's': c['s'], 'e': c['e']}}
+        r = {'char': c['char'], 'submitted': {'lc': c['lc'], 's': c['s'], 'e': c['e']}, 'ex': c.get('ex', False)}
         # 머리글 길 아이콘이 제출 캐릭터의 길과 확정으로 어긋난 프레임(검증 전용 — auto_judge 가 CHECK 로 보낸다)
         r['path_want'] = want_path[k] if k < len(want_path) else None
         r['path_conflicts'] = [{'t': f['t'], 'vid': f['vid'], 'seen': f['path_icon']} for f in frames if f.get('char_k') == k and f.get('path_conflict')]
@@ -1584,6 +1597,9 @@ def judge(rev, build_indices=None):
             r['lock_scores'] = f0.get('lock_scores')
             r['e_t'] = f0['t']
             r['e_how'] = f0['how']
+            # 기연 성혼: 이 캐릭터로 정해진 성혼 화면 중 가장 높은 값(화면이 열리는 연출 동안 조각이 안 보이는 프레임이 섞인다)
+            r['ex_score'] = round(max((affinitive_score(cv2.imread(f['path'])) for f in eif if f.get('path')), default=0.0), 3)
+            r['ex_seen'] = r['ex_score'] >= AFFINITIVE_MIN
             if r['e_uncertain']:
                 r['e_seen'] = None
                 r['e_alt'] = None
