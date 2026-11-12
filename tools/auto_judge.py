@@ -665,7 +665,7 @@ def run(rev, do_gp=True, reuse=False):
         g = cache['gp']
         seen = set(g['seen'])
         out['gp'] = {'flags': sorted(flags), 'seen': sorted(seen), 'first': {h['flag']: h['t'] for h in reversed(g['hits'])}}
-        for f in sorted(flags - seen):
+        for f in sorted((flags - seen) & {'revive', 'firewall'}):
             if f == 'revive':
                 # 카스토리스: 제출에 있는데 배너를 못 찾으면, 실제로 안 썼든 도구가 놓쳤든 사람이 본다(사용자, 2026-10-08)
                 out['check_reasons'].append('Castorice Global Passive submitted, but its trigger banner was not found in the video')
