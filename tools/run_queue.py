@@ -26,6 +26,7 @@ sys.path.insert(0, HERE)
 from paths import RUNS, WORK, PY, config   # noqa: E402
 from webhook import post   # noqa: E402
 from report import report, as_text, video_key, check_result, attach_sheets   # noqa: E402
+from urllib.error import URLError
 import video_policy   # noqa: E402
 
 ENV = dict(os.environ, PYTHONIOENCODING='utf8')
@@ -176,7 +177,13 @@ def take(rev, item, q_free=True):
 
 def still_mine(rev):
     lease = LEASES.get(rev)
-    return True if lease is None else lease.ok()
+    if lease is None:
+        return True
+    try:
+        return lease.ok()
+    except (URLError, TimeoutError) as exc:
+        print(f'{rev}: could not verify review ownership: {exc}', flush=True)
+        return False
 
 
 def drop(rev):
