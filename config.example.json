@@ -2,6 +2,7 @@
  "discord_webhook": "https://discord.com/api/webhooks/... (검토 보고용)",
  "question_webhook": "https://discord.com/api/webhooks/... (질문 · 시험 결과용)",
  "bot_key": "tga_bot_... (봇 API 키. 있으면 이것만 쓴다. 환경 변수 THEHERTA_BOT_KEY 도 된다)",
+ "imgur_client_id": "(선택) imgur 앱 Client ID. 있으면 봇 메모에 증거 그림 주소가 붙는다. 환경 변수 IMGUR_CLIENT_ID 도 된다",
  "mod_token": "(예전 방식) Supabase access token (Bearer)",
  "mod_refresh_token": "Supabase refresh token",
  "supabase_url": "https://<project>.supabase.co",

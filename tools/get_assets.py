@@ -6,7 +6,7 @@
   data/ui/element/<속성>_color.png · _dtype.png        상세 화면 속성 아이콘
 성혼 아이콘은 data/ExcelOutput/AvatarRankConfig.json 이 있어야 받는다(없으면 건너뛴다).
 python get_assets.py [--force]   (이미 있는 파일은 건너뜀)"""
-import os, sys, re, json, urllib.request, urllib.error
+import os, sys, re, json, time, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import cv2
@@ -21,12 +21,23 @@ PATHS = ['Joy', 'Knight', 'Mage', 'Memory', 'Pirest', 'Rogue', 'Shaman', 'Warloc
 ELEMENTS = ['Fire', 'Ice', 'Imaginary', 'Physical', 'Quantum', 'Thunder', 'Wind']
 
 
+def _open(url):
+    """HF 요청 하나. 429(요청 제한)는 Retry-After 만큼(없으면 점점 늘려) 기다렸다 다시 한다."""
+    for k in range(8):
+        try:
+            return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'reviewbot'}), timeout=60)
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or k == 7:
+                raise
+            time.sleep(min(120, float(e.headers.get('Retry-After') or 5 * (k + 1))))
+
+
 def fetch(path):
     """HF 에서 파일 하나(바이트). 최신판에 없으면 정식판. 둘 다 없으면 None."""
     for repo in REPOS:
         url = f'https://huggingface.co/datasets/{repo}/resolve/main/{path}'
         try:
-            return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'reviewbot'}), timeout=60).read()
+            return _open(url).read()
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 raise
@@ -40,7 +51,7 @@ def listing(path):
         url = f'https://huggingface.co/api/datasets/{repo}/tree/main/{path}'
         while url:
             try:
-                r = urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'reviewbot'}), timeout=60)
+                r = _open(url)
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     break
@@ -81,7 +92,7 @@ def run_tasks():
             return path, False
         save(raw, dest, webp, height)
         return path, True
-    with ThreadPoolExecutor(8) as ex:
+    with ThreadPoolExecutor(4) as ex:
         res = list(ex.map(one, TASKS))
     missing = [p for p, ok in res if not ok]
     print(f'받음 {len(res) - len(missing)} 개' + (f', HF 에 없음 {len(missing)} 개(예: {missing[:3]})' if missing else ''))

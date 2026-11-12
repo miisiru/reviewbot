@@ -151,6 +151,41 @@ def prefetch(rev, item, d):
     open(os.path.join(d, 'prefetch.log'), 'w', encoding='utf8').write(r.stdout + r.stderr[-2000:])
 
 
+class Heartbeat:
+    """검토 중 표시(봇 키는 ttl 최대 600초)를 판정이 끝날 때까지 4분마다 다시 건다. with 로 쓴다."""
+    def __init__(self, rev, on):
+        import threading
+        self.rev, self.on, self.stop = rev, on, threading.Event()
+        self.t = threading.Thread(target=self.loop, daemon=True)
+
+    def loop(self):
+        while not self.stop.wait(240):
+            sh([os.path.join(HERE, 'mod_api.py'), 'claim', self.rev])
+
+    def __enter__(self):
+        if self.on:
+            sh([os.path.join(HERE, 'mod_api.py'), 'claim', self.rev])
+            self.t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        if self.on:
+            sh([os.path.join(HERE, 'mod_api.py'), 'release', self.rev])
+        return False
+
+
+def leave_note(rev, item, res):
+    """판정(CHECK 포함)을 봇 메모로 남긴다. 봇 키가 없으면 건너뛴다. 실패해도 흐름은 계속."""
+    try:
+        import bot_note
+        out = bot_note.post(rev, res, item)
+        if out:
+            print(f'{rev}: {out}', flush=True)
+    except Exception as e:
+        print(f'{rev}: note error: {e}', flush=True)
+
+
 def finish(rev, item, d, res, secs, wh):
     """판정이 나온 건을 보고한다(보고 · 기록 · 웹후크는 한 곳에서 차례로 — 병렬이어도 섞이지 않는다)."""
     if res is None:
@@ -166,6 +201,7 @@ def finish(rev, item, d, res, secs, wh):
     send(wh, embed, d, rev)
     if wh and res['confidence'] <= 80:               # 확신도 80 이하는 질문 채널에도
         send('question', embed, d, rev)
+    leave_note(rev, item, res)                       # 결정보다 먼저 메모(카드에 판정 · 근거가 남는다)
     approve_if_clear(rev, item, res)
 
 
@@ -207,7 +243,7 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
             DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
-            pass                                  # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지에만 넣는다
+            leave_note(rev, item, res)            # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
         else:
             todo.append(rev)
     ex_dl = ThreadPoolExecutor(max(1, downloads))
@@ -220,14 +256,13 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
     def work(rev):
         t0 = time.time()
         d = os.path.join(RUNS, rev)
-        if claim:
-            sh([os.path.join(HERE, 'mod_api.py'), 'claim', rev])
         os.makedirs(d, exist_ok=True)
         log = open(os.path.join(d, 'worker.log'), 'w', encoding='utf8')
-        p = sp.Popen([PY, '-u', os.path.abspath(__file__), '--worker', rev, '--queue', qf],
-                     stdout=log, stderr=sp.STDOUT, env=ENV)
-        procs[rev] = p
-        p.wait()
+        with Heartbeat(rev, claim):
+            p = sp.Popen([PY, '-u', os.path.abspath(__file__), '--worker', rev, '--queue', qf],
+                         stdout=log, stderr=sp.STDOUT, env=ENV)
+            procs[rev] = p
+            p.wait()
         log.close()
         ap = os.path.join(d, 'auto.json')
         res = json.load(open(ap, encoding='utf8')) if p.returncode == 0 and os.path.exists(ap) else None
@@ -348,8 +383,6 @@ def main():
     for rev in revs:
         t0 = time.time()
         item = byid[rev]
-        if '--claim' in a:
-            sh([os.path.join(HERE, 'mod_api.py'), 'claim', rev])
         d = os.path.join(RUNS, rev)
         why_skip = gate_reason(rev, item, q, legacy)
         if why_skip:
@@ -357,9 +390,11 @@ def main():
             DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
-            pass                                  # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지에만 넣는다
+            leave_note(rev, item, res)            # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
             continue
-        finish(rev, item, d, run_item(rev, item, d), time.time() - t0, wh)
+        with Heartbeat(rev, '--claim' in a):
+            res = run_item(rev, item, d)
+        finish(rev, item, d, res, time.time() - t0, wh)
     summarize(started)
 
 
