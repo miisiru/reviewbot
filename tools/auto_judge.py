@@ -540,7 +540,7 @@ def run(rev, do_gp=True, reuse=False):
                 out['check_reasons'].append(
                     f"{name}: Affinitive Eidolon " + ('submitted but not seen on the Eidolon page' if c.get('ex') else 'seen on the Eidolon page but not submitted')
                     + f" (shard score {c.get('ex_score')})")
-    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t', 'e_uncertain', 'e_uncertainty_reasons', 'e_candidates', 'e_retry', 'lc_uncertain', 's_uncertain', 'lc_retry', 'ex', 'ex_seen', 'ex_score')}
+    out['build'] = [{k: c.get(k) for k in ('char', 'submitted', 'lc_seen', 'lc_match', 's_seen', 'e_seen', 'e_gray', 'e_alt', 'lock_scores', 'lc_t', 'e_t', 'e_uncertain', 'e_uncertainty_reasons', 'e_candidates', 'e_retry', 'lc_uncertain', 's_uncertain', 'lc_retry', 'ex', 'ex_seen', 'ex_score', 'orb_score')}
                     for c in b['chars']]
     tm('build')
     # 2) UID

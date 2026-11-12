@@ -466,6 +466,27 @@ def affinitive_score(img):
 
 AFFINITIVE_MIN = 0.15
 
+# 4.7: 1511(Aeon ★ Aha)은 6성혼을 열면 성혼 페이지가 구슬 모양 별도 UI 로 바뀐다(자물쇠 · 조각 없음, 구슬 1~5 옆에 파란 번호표, 가운데 아래 큰 구슬).
+# 6성혼 미만 · UI 를 끈 화면은 보통 조각 + 자물쇠 모양이라 기존 판독 그대로다. 번호표 자리(1280x720 기준)의 파란 비율로 가른다
+# (E6 화면 0.23~0.57, E0 · 다른 캐릭터 0.0: rev_10r6bcm, rev_1605j69).
+ORB_BADGES = [(848, 385), (918, 247), (886, 165), (482, 641)]
+
+
+def orb_ui_score(img):
+    if img is None:
+        return 0.0
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    vals = []
+    for x, y in ORB_BADGES:
+        cx, cy, r = int(x / 1280 * w), int(y / 720 * h), max(3, int(11 / 720 * h))
+        a = hsv[max(0, cy - r):cy + r, max(0, cx - r):cx + r]
+        vals.append(float(((a[..., 0] >= 100) & (a[..., 0] <= 125) & (a[..., 1] > 150) & (a[..., 2] > 150)).mean()))
+    return sum(vals) / len(vals)
+
+
+ORB_MIN = 0.12
+
 
 def eidolon_evidence(frame):
     """Assess lock evidence without using the submitted Eidolon count. 노드 아이콘 점수(frame['icon_scores'])가 있으면 함께 쓴다."""
@@ -1598,12 +1619,22 @@ def judge(rev, build_indices=None):
             r['e_t'] = f0['t']
             r['e_how'] = f0['how']
             # 기연 성혼: 이 캐릭터로 정해진 성혼 화면 중 가장 높은 값(화면이 열리는 연출 동안 조각이 안 보이는 프레임이 섞인다)
-            r['ex_score'] = round(max((affinitive_score(cv2.imread(f['path'])) for f in eif if f.get('path')), default=0.0), 3)
-            r['ex_seen'] = r['ex_score'] >= AFFINITIVE_MIN
+            # 1511 의 구슬 UI(6성혼)는 같은 자리에 보라색이 많아 조각으로 오인하므로 그 캐릭터는 기연 성혼 여부를 정하지 않는다(None, 열리는 연출 프레임도 같은 보라색)
+            imgs = [cv2.imread(f['path']) for f in eif if f.get('path')]
+            orb_any = any(orb_ui_score(i) >= ORB_MIN for i in imgs)
+            r['ex_score'] = round(max((affinitive_score(i) for i in imgs), default=0.0), 3)
+            r['ex_seen'] = None if orb_any else r['ex_score'] >= AFFINITIVE_MIN
             if r['e_uncertain']:
                 r['e_seen'] = None
                 r['e_alt'] = None
                 r['e_gray'] = 0
+            # 1511 의 구슬 UI(6성혼을 연 화면): 자물쇠로는 못 읽으므로 이 UI 자체가 E6
+            r['orb_score'] = round(max((orb_ui_score(cv2.imread(f['path'])) for f in eif if f.get('path')), default=0.0), 3)
+            if r['orb_score'] >= ORB_MIN and c['char'].startswith('Aeon'):
+                r['e_seen'], r['e_alt'], r['e_gray'] = 6, None, 0
+                r['e_uncertain'], r['e_uncertainty_reasons'] = False, []
+                r['e_how'] = (r.get('e_how') or '') + ' + orb UI (E6)'
+                r['e_frames'] = max(r.get('e_frames') or 0, 3)
         probs = []
         if not lcf:
             probs.append('Light Cone not shown')
