@@ -1571,9 +1571,12 @@ def judge(rev, build_indices=None):
                 uncertainty.append('incomplete lock evidence')
             if selected['fit'] and selected['fit'][2] < FIT_SURE:
                 uncertainty.append('ambiguous lock fit')
+            # 성혼 화면이 열리는 연출 중 한두 장(자물쇠가 아직 안 그려져 열림 점수로 보임)이 뒤의 열 장 넘는 안정 프레임과 다르다고
+            # 「안정 프레임이 서로 다르다」로 치지 않는다: 가장 많은 프레임의 절반이 안 되는 후보는 뺀다(rev_1llxmk0 214.3초 2장 vs 215초 15장)
+            max_frames = max((ev['frames'] for _, ev in evidence), default=0)
             stable_counts = {
                 ev['count'] for _, ev in evidence
-                if ev['clear'] and ev['frames'] >= 2
+                if ev['clear'] and ev['frames'] >= max(2, max_frames // 2)
             }
             if len(stable_counts) > 1:
                 uncertainty.append('stable frames disagree')
