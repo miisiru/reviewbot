@@ -665,7 +665,13 @@ def run(rev, do_gp=True, reuse=False):
         g = cache['gp']
         seen = set(g['seen'])
         out['gp'] = {'flags': sorted(flags), 'seen': sorted(seen), 'first': {h['flag']: h['t'] for h in reversed(g['hits'])}}
-        for f in sorted(flags - seen):
+        # 아하(aha · aha0~5)는 보유 효과 배너 글자가 없어 영상으로 아직 못 가린다(기준은 나중에). 은랑 · 카스토리스 확인에 섞어 「미발동」으로 거절하지 않는다.
+        # 편성에 1511 이 있으면 반드시 발동하므로 문제 없고, 없으면 도구가 확인하지 못했다고만 알린다
+        aha_flags = sorted(f for f in flags if f.startswith('aha'))
+        in_team = any((s0.get(f'p{j}_char') or '').startswith('Aeon') for j in range(1, 5))
+        if aha_flags and not in_team:
+            out['check_reasons'].append(f"Aha Global Passive ({', '.join(aha_flags)}) submitted and Aeon is not on the team: use of the passive is not verified by the tool")
+        for f in sorted((flags & {'revive', 'firewall'}) - seen):
             if f == 'revive':
                 # 카스토리스: 제출에 있는데 배너를 못 찾으면, 실제로 안 썼든 도구가 놓쳤든 사람이 본다(사용자, 2026-10-08)
                 out['check_reasons'].append('Castorice Global Passive submitted, but its trigger banner was not found in the video')
