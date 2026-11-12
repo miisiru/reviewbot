@@ -186,6 +186,13 @@ def drop(rev):
         lease.release()
 
 
+def log_result(rev, res, secs=0):
+    with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
+        f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
+                            'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '
+')
+
+
 def leave_note(rev, item, res):
     """판정(CHECK 포함)을 봇 메모로 남긴다. 봇 키가 없으면 건너뛴다. 실패해도 흐름은 계속."""
     if '--no-note' in sys.argv:
@@ -208,9 +215,7 @@ def finish(rev, item, d, res, secs, wh):
     DONE.append(rev)
     embed = report(rev, res, item)
     print(as_text(embed), f'\n({secs:.0f}s)\n', flush=True)
-    with open(os.path.join(WORK, 'results.jsonl'), 'a', encoding='utf8') as f:
-        f.write(json.dumps({'rev': rev, 'verdict': res['verdict'], 'confidence': res['confidence'],
-                            'problems': res['problems'], 'seconds': round(secs)}, ensure_ascii=False) + '\n')
+    log_result(rev, res, secs)
     send(wh, embed, d, rev)
     if wh and res['confidence'] <= 80:               # 확신도 80 이하는 질문 채널에도
         send('question', embed, d, rev)
@@ -265,6 +270,7 @@ def run_parallel(revs, byid, q, legacy, jobs, downloads, claim, wh, qf):
             DONE.append(rev)
             embed = report(rev, res, item)
             print(as_text(embed), flush=True)
+            log_result(rev, res)
             leave_note(rev, item, res)            # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
             drop(rev)
         else:
@@ -438,6 +444,7 @@ def main():
                 DONE.append(rev)
                 embed = report(rev, res, item)
                 print(as_text(embed), flush=True)
+                log_result(rev, res)
                 leave_note(rev, item, res)        # 분석 없이 곧바로 CHECK 인 건은 디스코드로 보내지 않고 요약 페이지 · 봇 메모에만
                 continue
             res = run_item(rev, item, d)

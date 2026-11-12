@@ -48,6 +48,11 @@ def learn_name(name):
     return name
 
 
+def names_of(s):
+    """claimed_by_name 은 건 사람이 여럿이면 「a (bot), b (bot)」 꼴로 이어 붙어 온다(서버 실측)."""
+    return {x.strip() for x in (s or '').split(', ') if x.strip()}
+
+
 def _holder(resp):
     """claim 응답에서 (잡은 이름, 사라짐 여부). 세션 방식 등 모양이 다르면 (None, False)."""
     rv = (resp or {}).get('review') if isinstance(resp, dict) else None
@@ -104,16 +109,16 @@ class Lease:
         if gone:
             return self._fail('already decided or gone')
         name, _ = _holder(resp)
-        if self.me is None and name is not None and listed_free:
+        if self.me is None and name is not None and listed_free and len(names_of(name)) == 1:
             self.me = learn_name(name)          # 아무도 안 잡은 건에 내가 걸었으니 보이는 이름이 내 이름
-        if name is not None and (self.me is None or name != self.me):
+        if name is not None and (self.me is None or names_of(name) - {self.me}):
             return self._fail(f'claimed by {name}')
         time.sleep(random.uniform(1.5, 3.5))
         resp, gone = _claim(self.rev, 600)
         if gone:
             return self._fail('already decided or gone')
         name, _ = _holder(resp)
-        if name is not None and name != self.me:
+        if name is not None and names_of(name) - {self.me}:
             return self._fail(f'claimed by {name}')
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -142,7 +147,7 @@ class Lease:
                 print(f'{self.rev}: claim refresh failed: {e}', flush=True)
             return True
         name, _ = _holder(resp)
-        if gone or (name is not None and self.me is not None and name != self.me):
+        if gone or (name is not None and self.me is not None and names_of(name) - {self.me}):
             self.lost = True
             self.why = 'already decided or gone' if gone else f'claimed by {name}'
             return False
