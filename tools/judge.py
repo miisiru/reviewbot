@@ -476,6 +476,12 @@ ORB_BADGES = [(848, 385), (918, 247), (886, 165), (482, 641)]
 def orb_ui_score(img):
     if img is None:
         return 0.0
+    # 위아래 · 좌우 검은 띠가 있는 영상은 화면 부분만 잘라서 본다(번호표 자리는 화면 비율 기준)
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    cols = np.where((g > 14).mean(axis=0) > 0.15)[0]
+    rows = np.where((g > 14).mean(axis=1) > 0.15)[0]
+    if len(cols) and len(rows):
+        img = img[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
     h, w = img.shape[:2]
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     vals = []
