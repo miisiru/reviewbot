@@ -145,6 +145,35 @@ def best(text, en):
     return max((sim(text, a), a) for a in aliases(en))
 
 
+_rival_cache = {}
+
+
+def rival_score(text, team_en):
+    """text 가 제출 팀 밖의 실제 캐릭터 이름과 얼마나 맞는가(가장 높은 것). 쇼케이스가 12명 전부를 보여 주는 영상에서
+    제출 캐릭터와 이름이 비슷한 다른 캐릭터(Acheron ↔ Archer 0.77)의 페이지를 제출 캐릭터 것으로 읽지 않으려는 용도."""
+    import imgrec
+    key = (norm(text), tuple(sorted(team_en)))
+    if key not in _rival_cache:
+        mine = {en_key(c) for c in team_en} | set(team_en)
+        top = 0.0
+        for name in imgrec.avatar_ids():
+            if name in mine or name.startswith('Trailblazer'):
+                continue
+            top = max(top, best(text, name)[0])
+            if top >= 0.97:
+                break
+        _rival_cache[key] = top
+    return _rival_cache[key]
+
+
+def best_vs_team(text, en, team_en):
+    """best() 이되, 같은 글이 팀 밖 다른 캐릭터 이름과 더 뚜렷이 맞으면 낮춘다."""
+    s = best(text, en)[0]
+    if s >= 0.6 and s < 0.97 and rival_score(text, team_en) >= max(0.9, s + 0.05):
+        return s * 0.4
+    return s
+
+
 # ---------- 배치 · 칸 ----------
 def layout_of(rev, vid):
     lay = []
@@ -1174,7 +1203,10 @@ def judge(rev, build_indices=None):
         lay = fr['lay']
         hl = read_lines(header_crop(f, lay), [model])[model] if lay else []
         fr['header'] = header_name(hl)
-        fr['who'] = sorted(((best(fr['header'], c['char'])[0], k) for k, c in enumerate(chars)), reverse=True)
+        team_en = [c_['char'] for c_ in chars]
+        fr['who'] = sorted(((best_vs_team(fr['header'], c['char'], team_en), k) for k, c in enumerate(chars)), reverse=True)
+        # 머리글이 팀 밖 다른 캐릭터 이름으로 뚜렷이 읽히면(12명 전부를 보여 주는 쇼케이스의 다른 캐릭터 페이지) 우리 캐릭터 것이 아니다
+        fr['foreign'] = bool(fr['header']) and fr['who'][0][0] < 0.7 and rival_score(fr['header'], team_en) >= 0.9
         if fr['tab'] == 'LightCone':
             pl = read_lines(panel_crop(f), [model])[model]
             # 일본어 제목 위의 후리가나(「ながよる」 「かがや」 「ほし」)는 줄로 따로 잡혀 제목을 밀어낸다 → 짧은 히라가나만의 줄은 뺀다(rev_13uh4f6)
@@ -1291,7 +1323,8 @@ def judge(rev, build_indices=None):
         for a, b, ls, el in raw:
             # 길 이름(「Elation」 등)이 개척자 별칭 「Trailblazer (Elation)」과 맞아 점수가 오르지 않게, 길 이름 줄은 빼고 본다
             names_only = [t for t in ls if norm(t) not in PATH_WORDS and norm(t) not in static and norm(t)]
-            sc = sorted(((max((best(t, c['char'])[0] for t in names_only), default=0), k2) for k2, c in enumerate(chars)), reverse=True)
+            team_en = [c_['char'] for c_ in chars]
+            sc = sorted(((max((best_vs_team(t, c['char'], team_en) for t in names_only), default=0), k2) for k2, c in enumerate(chars)), reverse=True)
             if tb and sc and sc[0][0] < 0.7 and names_only:
                 sc = [(0.7, tb[0])] + [z for z in sc if z[1] != tb[0]]     # 어느 이름과도 안 맞는 이름 줄 = 플레이어 이름 = 개척자
             dets.append({'vid': vi, 't0': a, 't1': b, 'text': ' '.join(ls), 'who': sc, 'elem': el})
@@ -1314,6 +1347,9 @@ def judge(rev, build_indices=None):
     lcf = sorted([f for f in frames if f['tab'] == 'LightCone'], key=lambda f: (f['vid'], f['t']))
     used = set()
     for fr in lcf:
+        if fr.get('foreign'):
+            fr['char_k'], fr['how'] = None, 'other character page'
+            continue
         s0, k0 = fr['who'][0]
         s1 = fr['who'][1][0] if len(fr['who']) > 1 else 0.0
         ls = fr['lc_scores']
@@ -1371,6 +1407,9 @@ def judge(rev, build_indices=None):
         for f, k in zip(left, free):
             f['char_k'], f['how'] = k, 'lc title tie, paired by order'
     for fr in sorted([f for f in frames if f['tab'] == 'Eidolon'], key=lambda f: (f['vid'], f['t'])):
+        if fr.get('foreign'):
+            fr['char_k'], fr['how'] = None, 'other character page'
+            continue
         s0, k0 = fr['who'][0]
         s1 = fr['who'][1][0] if len(fr['who']) > 1 else 0.0
         if s0 >= 0.7 or (s0 >= 0.6 and s0 - s1 >= 0.3):
