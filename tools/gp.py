@@ -51,13 +51,14 @@ def match(text, words):
 
 
 def big_text_row(c, H):
-    """큰 흰 글자(화면 높이 2.5~9%)가 가로 한 줄로 몇 개인지. 배너 이름은 셋 넘게 나오고,
-    피해 숫자 · 작은 안내 글은 대개 그보다 작거나 흩어져 있다. 이것으로 OCR 할 프레임을 1/10 로 줄인다."""
+    """흰 글자(화면 높이 1.5~9%)가 가로 한 줄로 몇 개인지. 배너 이름은 셋 넘게 나오고,
+    피해 숫자 · 작은 안내 글은 대개 그보다 작거나 흩어져 있다. 이것으로 OCR 할 프레임을 1/10 로 줄인다.
+    아래쪽 한계를 2.5% 로 두었더니 영어 소문자 배너(글자 높이 ≈2%)가 걸러져 카스토리스 배너를 놓쳤다(태국어 UI 영상 3:17)."""
     hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
     m = ((hsv[..., 2] > 190) & (hsv[..., 1] < 70)).astype(np.uint8)
     n, _, st, _ = cv2.connectedComponentsWithStats(m, 8)
     cs = [st[i][:4] for i in range(1, n)
-          if 0.025 * H <= st[i][3] <= 0.09 * H and st[i][2] <= 1.6 * st[i][3] and st[i][4] >= 0.15 * st[i][2] * st[i][3]]
+          if 0.015 * H <= st[i][3] <= 0.09 * H and st[i][2] <= 1.6 * st[i][3] and st[i][4] >= 0.15 * st[i][2] * st[i][3]]
     best = 0
     for x, y, w, h in cs:
         best = max(best, sum(1 for q in cs if abs((q[1] + q[3] / 2) - (y + h / 2)) < 0.35 * h and 0.6 * h <= q[3] <= 1.5 * h))
