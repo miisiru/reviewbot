@@ -90,6 +90,18 @@ def fit_layout(found, size):
     good = [(k, x, y) for k, (s, x, y) in enumerate(found) if s > MATCH]
     if len(good) < 5:
         return None
+    lay = _fit_good(good, size)
+    if lay is None and len(good) == 6:
+        # 아이콘 하나가 엉뚱한 자리에 약하게 맞은 경우(일본어 UI 영상 rev_1dushdi 의 특성 아이콘 0.66 이 15px 어긋남)
+        # 그 하나를 빼고 나머지 5개로 맞춘다
+        for drop in range(6):
+            lay = _fit_good([g for g in good if g[0] != drop], size)
+            if lay:
+                break
+    return lay
+
+
+def _fit_good(good, size):
     xs = np.array([g[1] for g in good])
     if np.abs(xs - np.median(xs)).max() > 0.35 * size:
         return None
