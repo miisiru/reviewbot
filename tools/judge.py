@@ -430,6 +430,7 @@ LOCK_GRAY = (0.5, 0.65)   # 이 사이면 애매(신뢰도 감점)
 # 성혼은 차례로만 열린다: 앞 k 개 열림, 뒤는 잠김. 노드마다 따로 가르지 않고 여섯 점수에 가장 잘 맞는 k 를 고른다.
 # 잰 값(판 66편): 열림 0.25~0.57, 잠김 대부분 0.8~0.96(드물게 0.67) → 가운데 0.7
 LOCK_MID = 0.7
+LOCK_SURE = 0.9    # 이 이상이면 자물쇠가 또렷하다(열린 노드는 0.5 아래, rev_dhasrn)
 FIT_SURE = 0.1     # 가장 잘 맞는 k 와 다음 k 의 어긋남 차이가 이보다 작으면 애매
 
 
@@ -445,6 +446,12 @@ def eidolon_fit(sc, ic=None):
             + sum(max(0.0, LOCK_MID - v) for v in sc[k:] if v is not None)
             + (sum(2 * max(0.0, v - ICON_OFF) for v in ic[k:] if v is not None) if ic else 0.0)
             for k in range(len(sc) + 1)]
+    # 자물쇠가 또렷한 노드(≥ LOCK_SURE)가 있으면 그보다 높은 번호는 열릴 수 없다(성혼은 1 부터 차례로 열린다).
+    # 자막 · 연출이 뒤 노드를 가리면 낮은 점수가 「열림」처럼 보인다(rev_dhasrn: 3 잠김 · 4~5 가려짐 → E5 · E6 으로 오판)
+    sure = [i for i, v in enumerate(sc) if v is not None and v >= LOCK_SURE]
+    if sure:
+        for k in range(sure[0] + 1, len(cost)):
+            cost[k] += 10.0
     order = sorted(range(len(cost)), key=lambda k: cost[k])
     return order[0], order[1], round(cost[order[1]] - cost[order[0]], 3)
 
