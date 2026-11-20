@@ -35,7 +35,8 @@ def resolve(url):
 
 def bili_parts(url):
     """빌리빌리 BV 영상이면 (BV, 링크가 가리킨 파트, 파트 수). 아니면 None."""
-    m = re.search(r"bilibili\.com/video/(BV[0-9A-Za-z]+)", url)
+    # 언어가 붙은 주소(bilibili.com/zh-Hant/video/BV…)도 같은 영상이다. 그대로 넘기면 yt-dlp 가 못 알아봐 길이를 못 읽는다(rev_oqwhnj)
+    m = re.search(r"bilibili\.com/(?:[A-Za-z]{2}(?:-[A-Za-z]+)?/)?video/(BV[0-9A-Za-z]+)", url)
     if not m:
         return None
     bv = m.group(1)
