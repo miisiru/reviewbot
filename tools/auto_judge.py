@@ -707,8 +707,13 @@ def run(rev, do_gp=True, reuse=False):
                             'first': turns[0]['start'] if turns else None, 'kind': ah['hits'][0][1] if ah['hits'] else None}
         # 규칙(사용자, 2026-11-15): Aeon ★ Aha 가 편성에 있으면 보유 효과는 언제나 켜져 있다 → 플래그가 없으면 누락.
         # 편성에 없으면 하트(장착)만으로는 안 되고 아하 타임(행동 순서 맨 위에 아하)이 실제로 와야 쓴 것이다
+        # 요광(Yao Guang)이 편성에 있으면 궁극기로 아하 차례가 오므로, 아하가 편성에 없을 때 아하 차례는 보유 효과를 쓴 증거가 아니다(사용자 규칙: 판정 불가)
+        yao = any((s0.get(f'p{j}_char') or '') == 'Yao Guang' for j in range(1, 5))
         if in_team and not aha_flags:
             prob('Global Passive missing: Aeon ★ Aha', 'gp_missing', who='aha', t=turns[0]['start'] if turns else None)
+        elif not in_team and yao and turns:
+            if not aha_flags:
+                out['check_reasons'].append('Aha turns seen, but Yao Guang is in the team and Aha is not: Aha Global Passive cannot be decided from the video')
         elif not in_team and turns and not aha_flags:
             prob('Global Passive missing: Aeon ★ Aha', 'gp_missing', who='aha', t=turns[0]['start'])
         elif not in_team and aha_flags and not turns:
@@ -717,7 +722,7 @@ def run(rev, do_gp=True, reuse=False):
             else:
                 out['check_reasons'].append(f"Aha Global Passive ({', '.join(aha_flags)}) submitted, but neither the Elation heart icon nor an Aha turn was found in the battle")
 
-        if not in_team and turns:
+        if not in_team and turns and not yao:
             lc = b.get('off_team_aha_lc') or {}
             out['gp']['aha']['light_cone'] = lc
             if lc.get('status') != 'verified':
