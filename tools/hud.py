@@ -292,6 +292,18 @@ def final_value(reads):
         vals = [(t, r[key]) for t, r in reads if r.get(key) is not None]
         if not vals:
             continue
+        if key == 'rav':
+            # 남은 행동값은 줄어들기만 한다. 앞서 읽은 값의 앞자리만 빠진 꼴(1863 → 863)은 글자 판독이 「1」을 놓친 것이다
+            # (rev_e1gsmd: 끝 세 번 중 둘을 863 으로 읽어 3863 을 2863 으로 거절할 뻔함)
+            fixed = []
+            for i, (t, v) in enumerate(vals):
+                if isinstance(v, int):
+                    longer = [u for _, u in vals[:i] if isinstance(u, int) and u > v and len(str(u)) > len(str(v))
+                              and str(u).endswith(str(v))]
+                    if longer:
+                        v = min(longer)
+                fixed.append((t, v))
+            vals = fixed
         last = vals[-3:]
         vs = [v for _, v in last]
         v = max(vs, key=vs.count)
