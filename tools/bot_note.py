@@ -24,10 +24,54 @@ def _plain(s):
     return re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', str(s))
 
 
+
+def _missing_gp_times(res):
+    """Use observed proc times only; never substitute battle start for a missing proc."""
+    import math
+    gp = res.get('gp') or {}
+    first = gp.get('first') or {}
+    labels = {'revive': 'Castorice', 'firewall': 'Silver Wolf LV.999',
+              'aha': 'Aeon ★ Aha'}
+    found = {}
+    def add(who, value):
+        if who not in labels or isinstance(value, bool):
+            return
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return
+        if math.isfinite(value) and value >= 0:
+            found[who] = min(found.get(who, value), value)
+    for problem in res.get('problem_items') or []:
+        if problem.get('kind') == 'gp_missing':
+            who = problem.get('who')
+            value = problem.get('t')
+            if value is None:
+                value = ((gp.get('aha') or {}).get('first') if who == 'aha'
+                         else first.get(who))
+            add(who, value)
+    # Older saved results may have no structured problem items or no item timestamp.
+    for who, label in labels.items():
+        if any(_plain(p) == f'Global Passive missing: {label}'
+               for p in res.get('problems') or []):
+            add(who, ((gp.get('aha') or {}).get('first') if who == 'aha'
+                      else first.get(who)))
+    return [(labels[who], t) for who, t in found.items()]
+
+
+def _gp_clock(t):
+    seconds = int(t)
+    return f'{seconds // 60}:{seconds % 60:02d}'
+
+
 def build_note(rev, res, item, upload_images=True):
     """(verdict, confidence, summary, reasons, evidence). 보내지는 않는다."""
     verdict = VERDICT.get(res.get('verdict'), 'check')
+    gp_times = _missing_gp_times(res)
     problems = [_plain(x) for x in (res.get('problems') or [])]
+    for name, t in gp_times:
+        prefix = f'Global Passive missing: {name}'
+        problems = [f'{p} — {_gp_clock(t)}' if p == prefix else p for p in problems]
     checks = [_plain(x) for x in (res.get('check_reasons') or [])]
     if verdict == 'reject':
         summary = ' / '.join(problems) or 'Problems found'
@@ -49,6 +93,12 @@ def build_note(rev, res, item, upload_images=True):
     u = _raw_url(timestamp_link(src['battle_online'], start, 'x')) if src['battle_online'] else None
     if u:
         evidence.append({'label': 'Battle video', 't': int(start), 'url': u})
+    for name, t in gp_times:
+        u = (_raw_url(timestamp_link(src['battle_online'], t, 'x'))
+             if src['battle_online'] else None)
+        if u:
+            evidence.append({'label': f'{name} GP proc {_gp_clock(t)}',
+                             't': int(t), 'url': u})
     sh_t = res.get('showcase')
     u = _raw_url(timestamp_link(src['build_online'], sh_t, 'x')) if src['build_online'] and sh_t is not None else None
     if u:

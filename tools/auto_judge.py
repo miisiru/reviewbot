@@ -744,7 +744,7 @@ def run(rev, do_gp=True, reuse=False):
             else:
                 prob("Global Passive not triggered: Silver Wolf LV.999", 'gp_not_triggered', who='firewall')
         for f in sorted(seen - flags):
-            prob(f"Global Passive missing: {'Castorice' if f == 'revive' else 'Silver Wolf LV.999'}", 'gp_missing', who=f)
+            prob(f"Global Passive missing: {'Castorice' if f == 'revive' else 'Silver Wolf LV.999'}", 'gp_missing', who=f, t=out['gp']['first'].get(f))
     tm('gp')
     # 5) 시작 시각(한 런 · 한 영상)
     url = s0.get('video_url')

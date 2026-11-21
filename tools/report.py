@@ -220,7 +220,13 @@ def gp_lines(g, video_url='', rev=None, local_url=None):
         else:
             out.append(f'{ROW_MARK[OK]} {name} heart shown, no Aha turn (not used)')
         if aha.get('first') is not None:
-            out[-1] += f" (first at {int(aha['first'])}s)"
+            timestamp = aha['first']
+            if video_url:
+                out[-1] += ' ' + video_time(video_url, timestamp)
+            if local_base:
+                out[-1] += ' Loc ' + video_time(local_base, timestamp)
+            if not video_url and not local_base:
+                out[-1] += f" (first at {mmss(timestamp)})"
 
     for flag in ('revive', 'firewall'):
         if flag in flags and flag in seen:
