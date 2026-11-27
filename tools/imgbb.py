@@ -32,6 +32,22 @@ def _shrink(path):
     return buf.tobytes() if ok else open(path, 'rb').read()
 
 
+COOL = os.path.join(WORK, 'imgbb_cooldown.txt')
+
+
+def _set_cooldown(seconds):
+    os.makedirs(WORK, exist_ok=True)
+    open(COOL, 'w').write(str(time.time() + seconds))
+
+
+def _cooling():
+    """한도에 걸려 쉬는 중이면 True"""
+    try:
+        return time.time() < float(open(COOL).read().strip())
+    except (OSError, ValueError):
+        return False
+
+
 def _cache():
     try:
         return json.load(open(CACHE, encoding='utf8'))
@@ -42,7 +58,7 @@ def _cache():
 def upload(path, retries=4):
     """그림 파일을 올려 https 주소를 돌려준다. 키가 없거나 실패하면 None(실패해도 검토는 계속된다)."""
     key = api_key()
-    if not key or not os.path.isfile(path):
+    if not key or not os.path.isfile(path) or _cooling():
         return None
     data = _shrink(path)
     h = hashlib.sha1(data).hexdigest()
@@ -67,10 +83,21 @@ def upload(path, retries=4):
                 return link
             return None
         except urllib.error.HTTPError as e:
+            try:
+                err = (json.loads(e.read().decode('utf8', 'replace')).get('error') or {})
+            except (ValueError, OSError):
+                err = {}
+            msg = str(err.get('message') or '')
+            if e.code == 400 and 'rate limit' in msg.lower():
+                # imgbb 는 한도에 걸리면 429 가 아니라 400 「Rate limit reached.」(code 100)를 준다. 건마다 다시 해 봐야 실패만 쌓이니
+                # 한 시간 쉬고, 그동안 메모는 그림 없이 간다
+                _set_cooldown(3600)
+                print('imgbb upload failed: rate limit reached; skipping uploads for 1 hour', file=sys.stderr)
+                return None
             if e.code in (429, 500, 502, 503) and k < retries - 1:
                 time.sleep(min(60, int(e.headers.get('Retry-After') or 5 * (k + 1))))
                 continue
-            print(f'imgbb upload failed: HTTP {e.code}', file=sys.stderr)
+            print(f'imgbb upload failed: HTTP {e.code} {msg[:120]}', file=sys.stderr)
             return None
         except (urllib.error.URLError, OSError) as e:
             if k < retries - 1:
