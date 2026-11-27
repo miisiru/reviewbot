@@ -71,6 +71,12 @@ def detect(video):
     # 가로 영상에서 가로가 꽉 찬 것(휴대폰 녹화를 위아래 검은 띠와 함께 16:9 로 올린 영상)은 지금 판독이 되므로 건드리지 않는다.
     # 세로 영상이거나 좌우에도 틀이 있을 때만 자른다
     if W > H and (c1 - c0) >= FULL * w:
+        # 다만 위아래 띠가 비대칭이면(위에 제목 글 띠, 아래 검은 띠: rev_15u6ojs 21:9 게임이 1280x536) 대칭 띠 감지가 실패해
+        # HUD · 배너 좌표가 어긋난다 → 게임 줄만 남기고 위아래 같은 높이의 검은 띠로 다시 채운다(fix 가 pad)
+        top, bottom = r0, h - r1
+        if (r1 - r0) < 0.9 * h and abs(top - bottom) > 0.03 * h:
+            y, bh = int(r0 / scale), int((r1 - r0) / scale)
+            return 0, y - y % 2, W - W % 2, bh - bh % 2
         return None
     x, y = int(c0 / scale), int(r0 / scale)
     bw, bh = int((c1 - c0) / scale), int((r1 - r0) / scale)
@@ -101,10 +107,18 @@ def fix(video):
     if box is None:
         return None
     x, y, w, h = box
+    cap = cv2.VideoCapture(video)
+    W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    cap.release()
     oh = int(round(1280 * h / w / 2)) * 2          # 16:9 면 720, 휴대폰 비율이면 그 비율대로
+    vf = f'crop={w}:{h}:{x}:{y},scale=1280:{oh}:flags=lanczos'
+    if w >= W - 1 and W > H:
+        # 가로가 꽉 찬 비대칭 띠 영상: 게임 줄을 가운데 두고 위아래를 같은 검은 띠로(원래 비율 그대로)
+        th = int(round(1280 * H / W / 2)) * 2
+        vf += f',pad=1280:{th}:0:{(th - oh) // 2}:black'
     tmp = video + '.crop.mp4'
     r = subprocess.run([ffmpeg(), '-y', '-loglevel', 'error', '-i', video,
-                        '-vf', f'crop={w}:{h}:{x}:{y},scale=1280:{oh}:flags=lanczos',
+                        '-vf', vf,
                         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'copy', tmp],
                        capture_output=True, text=True, errors='replace')
     if r.returncode or not os.path.exists(tmp):

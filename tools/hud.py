@@ -160,6 +160,8 @@ def parse_plight(c, box):
     x, y, w, h = [int(v) for v in box[:4]]
     y0, y1 = max(0, int(y - 0.3 * h)), min(c.shape[0], int(y + 1.3 * h))
     # 오른쪽은 숫자 세 자리(「300」)가 들어갈 만큼 넉넉히. 칸 자리(geom)가 한 자리짜리 상자(「3」)에서 잡혔으면 창이 「300」을 잘라 「3」으로 읽는다(rev_1vg0h7v 실제 300 을 3 으로 읽고 거절 오판)
+    # 글자 찾기가 「⧗2 | 4」까지만 상자로 잡는 일이 있다(rev_15u6ojs: 너비 41, 온전한 칸은 81 ≈ 높이의 3.5배) → 창 너비는 적어도 높이의 3.4배
+    w = max(w, int(3.4 * h))
     x0, x1 = max(0, int(x - 3.5 * h)), min(c.shape[1], int(x + w + 1.6 * h))
     cell = c[y0:y1, x0:x1]
     if cell.size == 0:
@@ -257,7 +259,7 @@ def scan(rev, vid=0, model='chinese', mode='aa', plight=False, start=0.0, end=No
                     g = (int(pl[1][0]), int(pl[1][2]), int(pl[1][3]))
                     # 글자 찾기가 칸의 일부만 작은 상자로 잡을 때가 있다(rev_1243edf 507초: 높이 16, 평소 31). 그 크기로 밀면 창 오른쪽이
                     # 좁아 「42」의 2 가 잘려 4 로 읽는다 → 앞서 잡은 칸보다 많이 작은 상자로는 칸 자리를 바꾸지 않는다(읽은 값은 그대로 쓴다)
-                    if st['geom'] is not None and g[2] < 0.75 * st['geom'][2]:
+                    if st['geom'] is not None and (g[2] < 0.75 * st['geom'][2] or g[1] < 0.75 * st['geom'][1]):
                         st['last_pl'] = max(st['last_pl'], t)
                     elif st['last_pl'] is None or t > st['last_pl']:
                         st['geom'], st['last_pl'] = g, t
