@@ -71,7 +71,13 @@ def select_battle(segments, anchor, unresolved=()):
         return 0, segments[0]
     containing = [(i, s) for i, s in enumerate(segments) if s['start'] <= anchor < s['end']]
     if len(containing) == 1:
-        return containing[0]
+        i, s = containing[0]
+        # 타임스탬프는 런의 시작을 가리킨다. 앞 전투가 한참 진행된 뒤(60초 넘게)이고 30초 안에 다음 전투가 시작하면 그 다음 전투다
+        # (rev_bbp7rj: &t=293 은 24~306초 전투의 끝 무렵, 그 런은 318초에 시작)
+        nxt = [(j, n) for j, n in enumerate(segments) if j > i and 0 <= n['start'] - anchor <= 30]
+        if nxt and anchor - s['start'] > 60:
+            return nxt[0]
+        return i, s
     if containing:
         raise ValueError('Timestamp overlaps multiple battles; manual review required')
     following = [(i, s) for i, s in enumerate(segments) if anchor <= s['start'] <= anchor + 90]
