@@ -1765,7 +1765,7 @@ def judge(rev, build_indices=None):
             import imgrec
             r['elem_want'] = imgrec.element_of_char(en_key(c['char']))
             r['elem_seen'] = [x['elem'] for x in dets if x.get('elem') and x['who'] and x['who'][0][1] == k and x['who'][0][0] >= 0.9]
-            r['elem_conflict'] = bool(r['elem_want'] and any(e != r['elem_want'] for e in r['elem_seen']))
+            r['elem_conflict'] = bool(r['elem_want'] and r['elem_seen'] and r['elem_want'] not in r['elem_seen'])      # 맞는 속성도 보였으면 이웃 화면이 섞인 것(rev_1v8ry94 Ice/Wind)
         except Exception:
             pass
         if lcf:

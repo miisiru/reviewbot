@@ -74,7 +74,11 @@ def detect(video):
         # 다만 위아래 띠가 비대칭이면(위에 제목 글 띠, 아래 검은 띠: rev_15u6ojs 21:9 게임이 1280x536) 대칭 띠 감지가 실패해
         # HUD · 배너 좌표가 어긋난다 → 게임 줄만 남기고 위아래 같은 높이의 검은 띠로 다시 채운다(fix 가 pad)
         top, bottom = r0, h - r1
-        if (r1 - r0) < 0.9 * h and abs(top - bottom) > 0.03 * h:
+        # 위아래 띠가 검지 않아도(흰 낙서 장식 띠, rev_segsk7) 검은 띠 감지가 못 하니 같은 처리
+        mean = np.mean(np.stack(grays), axis=0)
+        bands = np.concatenate([mean[:r0].ravel(), mean[r1:].ravel()]) if (r0 or r1 < h) else np.array([0.0])
+        not_black = bands.size > 0 and float(np.median(bands)) > 30
+        if (r1 - r0) < 0.9 * h and (abs(top - bottom) > 0.03 * h or not_black):
             y, bh = int(r0 / scale), int((r1 - r0) / scale)
             return 0, y - y % 2, W - W % 2, bh - bh % 2
         return None
