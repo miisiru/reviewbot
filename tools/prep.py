@@ -199,6 +199,7 @@ for rid in sys.argv[1:]:
     long_ = []
     for i, e in enumerate(entries):
         v = os.path.join(d, f"video{i}.mp4")
+        why = ''
         if os.path.exists(v):
             # 이미 받은 파일은 파일 길이로
             o = subprocess.run([FF, "-i", v], capture_output=True, text=True, errors="replace").stderr
@@ -224,7 +225,11 @@ for rid in sys.argv[1:]:
                                capture_output=True, text=True, encoding="utf8", errors="replace")
             m = re.match(r"\s*([\d.]+)", p.stdout)
             sec = float(m.group(1)) if m else 0
+            why = '' if m else next((ln.split(':', 2)[-1].strip() for ln in p.stderr.splitlines() if ln.startswith('ERROR')), '')
         decision = video_policy.duration_decision(sec, video_policy.url_key(e["url"]))
+        if decision and why and decision['reason'].startswith('Could not read video duration'):
+            # 비공개 · 삭제 따위 까닭을 같이 적는다(rev_13kol1f: 「Private video」인데 길이를 못 읽었다고만 나왔다)
+            decision['reason'] += f" (yt-dlp: {why.split('. ')[0][:120]})"
         if decision:
             long_.append(dict(decision, url=e["url"], seconds=sec))
     if long_:
