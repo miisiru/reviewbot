@@ -27,12 +27,32 @@ def _excel(name):
     return json.loads(s, object_hook=fix)
 
 
+_avatar_rows = None
+
+
+def avatar_rows():
+    """AvatarConfig.json + AvatarConfigLD.json. 콜라보 캐릭터(Saber · Archer · Rin Tohsaka · Gilgamesh)는 LD 쪽에만 있다
+    (빠지면 이름 · 등급을 몰라 팀 순서 확인을 건너뛰었다, rev_au2ndw)"""
+    global _avatar_rows
+    if _avatar_rows is None:
+        seen, out = set(), []
+        for name in ('AvatarConfig.json', 'AvatarConfigLD.json'):
+            if not os.path.exists(os.path.join(EXCEL, name)):
+                continue
+            for r in _excel(name):
+                if r.get('AvatarID') not in seen:
+                    seen.add(r.get('AvatarID'))
+                    out.append(r)
+        _avatar_rows = out
+    return _avatar_rows
+
+
 def _names(kind):
     """kind = 'char' | 'lc' → {EN 이름: {언어: 이름}}"""
     if kind in _tables:
         return _tables[kind]
     en = names._load('EN')
-    rows = _excel('AvatarConfig.json') if kind == 'char' else _excel('EquipmentConfig.json')
+    rows = avatar_rows() if kind == 'char' else _excel('EquipmentConfig.json')
     out = {}
     for r in rows:
         h = str((r.get('AvatarName') if kind == 'char' else r.get('EquipmentName') or {}).get('Hash'))

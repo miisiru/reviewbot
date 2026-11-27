@@ -195,7 +195,7 @@ def path_of_char(en_name):
     if p or en_name.startswith('Trailblazer'):
         return p
     import reasons
-    rows = {r['AvatarID']: r for r in reasons._excel('AvatarConfig.json')}
+    rows = {r['AvatarID']: r for r in reasons.avatar_rows()}
     out = {PATH_OF_BASETYPE.get(rows[i].get('AvatarBaseType')) for i in char_ids(en_name) if i in rows}
     out.discard(None)
     return out.pop() if len(out) == 1 else None
@@ -256,7 +256,7 @@ def read_element_icon(f):
 def element_of_char(en_name):
     """제출 캐릭터의 속성(Fire …). 이름 끝 괄호가 길이면(개척자 · 3월 7일) 그 길의 아이디로 좁힌다."""
     import reasons
-    rows = {r['AvatarID']: r for r in reasons._excel('AvatarConfig.json')}
+    rows = {r['AvatarID']: r for r in reasons.avatar_rows()}
     ids = char_ids(en_name)
     want = _path_in_name(en_name)
     if want:
@@ -299,7 +299,7 @@ def avatar_ids():
         import reasons, names
         en = names._load('EN')
         _avid = {}
-        for r in reasons._excel('AvatarConfig.json'):
+        for r in reasons.avatar_rows():
             e = names.clean(en.get(str((r.get('AvatarName') or {}).get('Hash')), ''))
             if e:
                 _avid.setdefault(e, []).append(r['AvatarID'])
@@ -319,7 +319,7 @@ def rarity_of(en_name):
     if _rarity is None:
         import reasons
         _rarity = {}
-        for r in reasons._excel('AvatarConfig.json'):
+        for r in reasons.avatar_rows():
             m = re.search(r'(\d)$', str(r.get('Rarity') or ''))
             if m:
                 _rarity[r['AvatarID']] = int(m.group(1))
