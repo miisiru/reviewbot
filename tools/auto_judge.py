@@ -678,12 +678,12 @@ def run(rev, do_gp=True, reuse=False):
             raise ValueError(f'Unsupported gp_ocr_model: {gp_model!r}')
         if ('gp' not in cache
                 or cache['gp'].get('ocr_model') != gp_model
-                or cache['gp'].get('detector_version') != 2):
+                or cache['gp'].get('detector_version') != 3):
             print(f'{rev}: GP OCR model {gp_model}', flush=True)
             g0 = gp.scan(rev, run_vid, model=gp_model, **battle_kwargs)
             cache['gp'] = {
                 'seen': g0['seen'], 'hits': g0['hits'],
-                'ocr_model': gp_model, 'detector_version': 2,
+                'ocr_model': gp_model, 'detector_version': 3,
                 'frames': g0['frames'], 'end': g0['end'],
                 'ocr_calls': g0['ocr_calls'],
                 'band_crop': g0['band_crop'],

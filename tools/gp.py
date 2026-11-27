@@ -87,15 +87,22 @@ def scan(rev, vid=0, model='chinese', fps=4, start=0.0, end=None):
             end = min(late)
     hits, nocr, nfr = [], 0, 0
     prev = {}
+    # 위아래 검은 띠가 있으면(21:9 게임을 16:9 로 담은 영상) 띠를 뺀 게임 화면 기준으로 자리를 잡는다 — 전체 화면 비율로 자르면
+    # 배너 윗부분이 잘린다(rev_15u6ojs 130.25초 「999セキュリティバリア」)
+    import aha_gp
+    b0, b1 = aha_gp.bars(video, start, end)
     for t, f in tabs.frames(video, start, max(0, end - start), fps, W, H):
         nfr += 1
-        band = f[int(0.55 * H):int(0.74 * H), int(0.45 * W):int(0.98 * W)]
-        top = f[int(0.02 * H):int(0.12 * H), int(0.20 * W):int(0.80 * W)]
+        if b0 or b1:
+            f = f[b0:b1]
+        Hf = f.shape[0]
+        band = f[int(0.52 * Hf):int(0.78 * Hf), int(0.45 * W):W]      # 오른쪽 끝까지: 21:9 화면에선 배너가 끝에 붙는다(rev_15u6ojs)
+        top = f[int(0.02 * Hf):int(0.12 * Hf), int(0.20 * W):int(0.80 * W)]
         for where, c in (('band', band), ('top', top)):
             if where == 'band':
                 # 큰 글자 줄 사전 필터는 컷인 그림 위에 겹친 배너(일본어 UI 영상 rev_yssm9g 2:34 「999セキュリティバリア」)를 놓친다
                 # → 필터를 통과 못 해도 0.5초(4fps 의 2프레임)마다 한 번은 읽는다. 배너는 1.5초 이상 떠 있다
-                if big_text_row(c, H) < 3 and nfr % 2:
+                if big_text_row(c, Hf) < 3 and nfr % 2:
                     continue
             else:
                 if nfr % max(1, int(fps)) != 0:
@@ -143,7 +150,8 @@ def scan(rev, vid=0, model='chinese', fps=4, start=0.0, end=None):
                         if flag == 'firewall' and s < 0.75:
                             # 은랑 배너는 모든 언어에서 「999」로 시작한다. 짧게 떠서 글자가 덜 읽혀도(「999セイバア」) 숫자 뒤에 글자가 이어지면 맞는 것으로 본다
                             n = norm(txt)
-                            if n.startswith('999') and len(n) >= 5 and re.search(r'\D', n[3:]):
+                            # 글자 하나만 붙어도(「999セ」: 21:9 화면 끝에 붙은 배너를 넓은 띠로 읽으면 이만큼만 읽힌다, rev_15u6ojs) 인정
+                            if n.startswith('999') and len(n) >= 4 and re.search(r'\D', n[3:]):
                                 s = 0.8
                         if s >= 0.75:
                             hits.append({'t': round(t, 2), 'flag': flag, 'text': txt, 'score': round(s, 2)})
@@ -152,7 +160,7 @@ def scan(rev, vid=0, model='chinese', fps=4, start=0.0, end=None):
                     if s >= 0.75:
                         hits.append({'t': round(t, 2), 'flag': 'firewall', 'text': txt, 'score': round(s, 2), 'where': 'top'})
     seen = sorted({h['flag'] for h in hits})
-    return {'video': video, 'ocr_model': model, 'band_crop': [0.55, 0.45, 0.74, 0.98], 'start': round(start, 3), 'end': round(end, 1), 'frames': nfr, 'ocr_calls': nocr, 'seen': seen, 'hits': hits[:20]}
+    return {'video': video, 'ocr_model': model, 'band_crop': [0.52, 0.45, 0.78, 1.0], 'start': round(start, 3), 'end': round(end, 1), 'frames': nfr, 'ocr_calls': nocr, 'seen': seen, 'hits': hits[:20]}
 
 
 if __name__ == '__main__':
