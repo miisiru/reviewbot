@@ -51,6 +51,17 @@ FORMATS = ["bv*[vcodec^=avc1][height<=720]/bv*[height<=720][ext=mp4]/bv*[height<
            "bv*[vcodec^=avc1][height<=1080]/bv*[height<=1080]/b"]
 
 
+def _online_duration(url):
+    """지금 온라인 영상 길이(초), 못 읽으면 0"""
+    try:
+        p = subprocess.run([YT, *YT_COOKIES, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", url],
+                           capture_output=True, text=True, encoding="utf8", errors="replace", timeout=90)
+    except subprocess.TimeoutExpired:
+        return 0
+    m = re.match(r"\s*([\d.]+)", p.stdout)
+    return float(m.group(1)) if m else 0
+
+
 def decoded_ratio(v, expect=None):
     """끝까지 디코드되는 몫(1fps 로 센 프레임 / 길이). 빌리빌리 720p 파일이 끝부분에서 깨지는 일이 있다.
     길이는 사이트가 알려 준 길이(expect)를 먼저 쓴다 — 깨진 파일은 머리의 길이 정보도 틀릴 수 있다."""
@@ -193,6 +204,21 @@ for rid in sys.argv[1:]:
             o = subprocess.run([FF, "-i", v], capture_output=True, text=True, errors="replace").stderr
             mm = re.search(r"Duration: (\d+):(\d+):([\d.]+)", o)
             sec = int(mm.group(1)) * 3600 + int(mm.group(2)) * 60 + float(mm.group(3)) if mm else 0
+            # 업로더가 같은 주소의 영상을 새 녹화로 바꾸는 일이 있다(rev_c6sxi9: 318.0초 → 313.4초, 장면 · 보유 효과가 다름).
+            # 받아 둔 파일(공용 캐시에서 꺼낸 것 포함)의 길이가 지금 온라인 길이와 다르면 파일 · 캐시 · 이 건의 판정 캐시를 버리고 새로 받는다
+            online = _online_duration(e["url"])
+            if sec and online and abs(online - sec) > 2.0:
+                print(f"{rid}: video{i} changed online ({sec:.1f}s -> {online:.1f}s); downloading again", flush=True)
+                os.remove(v)
+                cache = video_cache.part_cache(e)
+                if cache is not None and (cache / 'download').exists():
+                    shutil.rmtree(cache / 'download', ignore_errors=True)
+                for name in ("auto_cache.json", "judge.json", "segment_selection.json", f"video{i}.info"):
+                    if os.path.exists(os.path.join(d, name)):
+                        os.remove(os.path.join(d, name))
+                for name in (f"tabs{i}", f"sheet{i}"):
+                    shutil.rmtree(os.path.join(d, name), ignore_errors=True)
+                sec = online
         else:
             p = subprocess.run([YT, *YT_COOKIES, "--js-runtimes", "node", "--no-playlist", "--skip-download", "--print", "%(duration)s", e["url"]],
                                capture_output=True, text=True, encoding="utf8", errors="replace")
