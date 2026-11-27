@@ -400,10 +400,12 @@ def lock_states(f, lay, want_pred=False, fine_scales=False):
     out = []
     for px, py in pred:
         no_circle = min((np.hypot(px - cx, py - cy) for cx, cy in cs), default=1e9) >= 0.4 * sp
-        x1 = max(0, min(W, int(px - 0.5 * sp)))
-        x2 = max(0, min(W, int(px + 0.5 * sp)))
-        y1 = max(0, min(H, int(py - 0.5 * sp)))
-        y2 = max(0, min(H, int(py + 0.5 * sp)))
+        # 창은 노드 자리 ±0.75 간격: 16:9 가 아닌 화면(1098x720, rev_1iv6zbn)은 노드 배치가 기준 모양과 조금 달라 원이 안 잡힌 노드의
+        # 짐작 자리가 자물쇠에서 0.4 간격쯤 비껴 ±0.5 창으로는 자물쇠가 잘렸다(6번 잠김을 열림 0.39 로). 노드끼리는 2 간격 넘게 떨어져 있다
+        x1 = max(0, min(W, int(px - 0.75 * sp)))
+        x2 = max(0, min(W, int(px + 0.75 * sp)))
+        y1 = max(0, min(H, int(py - 0.75 * sp)))
+        y2 = max(0, min(H, int(py + 0.75 * sp)))
 
         crop = g[y1:y2, x1:x2]
         if crop.size == 0:
