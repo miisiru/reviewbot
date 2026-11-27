@@ -213,6 +213,9 @@ def read_plight(f, model):
     """OCR 이 찾은 숫자 상자마다 절망 칸 꼴인지 본다. 찾으면 ((N, x), 상자)."""
     c = plight_col(f)
     for b in sorted(ocr(c, model), key=lambda b: b[1]):
+        # 맨 위 가장자리는 녹화 프로그램의 FPS · GPU 표시가 있는 자리다(rev_1eofm1d: 「GPU 85% 70」을 「⧗3 | 11」로 읽어 AV 289 거절 판정)
+        if b[1] < 0.04 * c.shape[0]:
+            continue
         if re.search(r'\d', b[4]):
             p = parse_plight(c, b)
             if p:
@@ -225,7 +228,7 @@ def read_plight_slide(f, geom):
     c = plight_col(f)
     x, w, h = geom
     # 간격이 크면 칸을 건너뛴다(rev_1i4511j: y=941 에서만 읽히는데 12px 간격이 936 · 948 만 봐서 마지막 값 1 | 69 를 놓쳤다)
-    for y in range(0, max(1, c.shape[0] - h), max(1, h // 8)):
+    for y in range(int(0.04 * c.shape[0]), max(1, c.shape[0] - h), max(1, h // 8)):      # 맨 위 가장자리(FPS 표시)는 빼고
         p = parse_plight(c, (x, y, w, h))
         if p:
             return p
@@ -278,6 +281,14 @@ def scan(rev, vid=0, model='chinese', mode='aa', plight=False, start=0.0, end=No
     if not enough(reads) and mid > start:
         reads = pass_a(start, mid) + reads
     geom, last_pl = st['geom'], st['last_pl']
+    if plight and geom is None:
+        # 글자 찾기가 칸을 한 번도 못 잡았으면(rev_1eofm1d: 「⧗2 | 1」이 글자로 안 잡힘) 보통 칸 크기(720p 에서 x 97 · 너비 112 · 높이 31,
+        # 2배로 키운 줄 기준)로 끝 40초를 밀어 읽는다. 칸 꼴(모래시계 · 구분선 · 숫자) 검사는 그대로라 아무 글자나 잡지 않는다
+        k = H / 720.0
+        g0 = (int(97 * k), int(112 * k), int(31 * k))
+        for t, f in tabs.frames(video, max(start, end - 40), min(40, end - start), 1, W, H):
+            if read_plight_slide(f, g0):
+                geom, last_pl = g0, t
     if plight and geom:
         # 끝 무렵은 4fps 로 다시: 마지막 칸 값은 몇 초만 보이기도 한다(궁 연출 사이)
         for t, r in reads:
