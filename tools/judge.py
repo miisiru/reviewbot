@@ -1755,6 +1755,8 @@ def judge(rev, build_indices=None):
             r['lc_title_found'] = bool(f0.get('title_found', True))
             r['lc_match'] = round(lcs_k.get(k, 0), 2)
             r['s_seen'] = f0['superimp']
+            # 쇼케이스가 같은 팀을 두 번 보여 주면(전투마다 빌드를 바꾼 PF 영상, rev_hadg6k) 광추 화면마다 중첩이 다를 수 있다 → 다 적어 둔다
+            r['s_all'] = sorted({f['superimp'] for f in lcf if f.get('superimp') is not None})
             r['lc_t'] = f0['t']
             r['lc_how'] = f0['how']
             retry_name = r['lc_match'] < 0.7 or not r['lc_title_found']

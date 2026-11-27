@@ -508,6 +508,12 @@ def run(rev, do_gp=True, reuse=False):
                 out['check_reasons'].append(f'{name}: Superimposition uncertain after extra sampling')
             elif c.get('s_seen') is None:
                 ded('superimp_unread', f'{name}: Superimposition unreadable')
+            elif c['s_seen'] != sub['s'] and sub['s'] in (c.get('s_all') or []) and len(c.get('s_all') or []) > 1:
+                # 쇼케이스에 이 광추 화면이 여러 번 나오고 중첩이 서로 다르며 그중 하나가 제출과 같다(같은 팀을 두 번 보여 준 쇼케이스,
+                # rev_hadg6k: 앞 묶음 S2 · 뒤 묶음 S1). 어느 쪽이 이 전투 것인지 영상만으로 못 가르니 불일치로 거절하지 않고 사람이 본다
+                out['check_reasons'].append(
+                    f"{name}: the showcase shows this Light Cone more than once with different Superimpositions "
+                    f"({', '.join('S%d' % v for v in c['s_all'])}); one matches the submission — confirm which showcase round belongs to this battle")
             elif c['s_seen'] != sub['s']:
                 prob(f"{name} Superimposition mismatch (submitted S{sub['s']}, video S{c['s_seen']})", 'superimp_mismatch', char=name,
                      sub=sub['s'], video=c['s_seen'])
