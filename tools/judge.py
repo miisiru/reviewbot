@@ -1746,7 +1746,9 @@ def judge(rev, build_indices=None):
         except Exception:
             pass
         if lcf:
-            f0 = max(lcf, key=lambda f: f['lc_scores'][0][0] if f['lc_scores'] else 0)
+            # 광추 점수가 같으면 중첩 줄 · 제목이 읽힌 프레임을 고른다(rev_1ggwrd: 첫 장이 넘어가는 중이라 「In-ns」뿐이고 뒤 세 장은 「วางซ้อน Lv.5」)
+            f0 = max(lcf, key=lambda f: (f['lc_scores'][0][0] if f['lc_scores'] else 0, f.get('superimp') is not None,
+                                         bool(f.get('title_found', True))))
             lcs_k = dict((kk, s) for s, kk in f0['lc_scores'])
             r['lc_seen'] = f0['panel_title']
             r['lc_img'] = f0.get('lc_img')
