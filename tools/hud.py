@@ -254,8 +254,13 @@ def scan(rev, vid=0, model='chinese', mode='aa', plight=False, start=0.0, end=No
                 pl = read_plight(f, model)
                 if pl:
                     r['plight'] = list(pl[0])
-                    if st['last_pl'] is None or t > st['last_pl']:
-                        st['geom'], st['last_pl'] = (int(pl[1][0]), int(pl[1][2]), int(pl[1][3])), t
+                    g = (int(pl[1][0]), int(pl[1][2]), int(pl[1][3]))
+                    # 글자 찾기가 칸의 일부만 작은 상자로 잡을 때가 있다(rev_1243edf 507초: 높이 16, 평소 31). 그 크기로 밀면 창 오른쪽이
+                    # 좁아 「42」의 2 가 잘려 4 로 읽는다 → 앞서 잡은 칸보다 많이 작은 상자로는 칸 자리를 바꾸지 않는다(읽은 값은 그대로 쓴다)
+                    if st['geom'] is not None and g[2] < 0.75 * st['geom'][2]:
+                        st['last_pl'] = max(st['last_pl'], t)
+                    elif st['last_pl'] is None or t > st['last_pl']:
+                        st['geom'], st['last_pl'] = g, t
             if r:
                 out.append((round(t, 1), r))
         return out
