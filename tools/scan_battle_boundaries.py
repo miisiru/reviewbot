@@ -766,8 +766,12 @@ def run_hud_state(args):
                 continue
             if battle_start is not None and not args.no_repair:
                 # 끝 배너를 못 읽었으면 먼저 결과 화면 글로 끝을 찾는다(싸다). 없을 때만 남은 구간 전체를 4fps 로 훑는다
-                hit = find_result_screen(engine, args.video, max(battle_start+.5, (last_present or battle_start) - 2), finish,
-                                         width, height, FF, counts)
+                near = max(battle_start+.5, (last_present or battle_start) - 2)
+                hit = find_result_screen(engine, args.video, near, finish, width, height, FF, counts)
+                if not hit and near > battle_start + 1:
+                    # 「HUD 가 마지막으로 보인 때」가 전투 뒤 메뉴 화면 따위로 늦게 잡히면 그 앞의 결과 화면을 못 본다
+                    # (rev_kg1m9l: 244초부터 봐서 214초 「Desafio Concluído」를 놓쳤다) → 전투 시작 뒤 앞쪽도 본다
+                    hit = find_result_screen(engine, args.video, battle_start+.5, near, width, height, FF, counts)
                 if hit and hit['t'] > battle_start+3:
                     print(f"Battle end {hit['t']:.2f}s ({hit['source']}: {hit['text']!r})", flush=True)
                     hit['evidence'] = None
