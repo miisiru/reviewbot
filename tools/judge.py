@@ -601,6 +601,13 @@ def retry_lightcone(video, anchor, frames, chars, char_k, model, W, H):
         title = ' '.join(title_texts)
         score = lc_score(texts, chars[char_k]) if texts else 0.0
         superimp, line = superimp_from(lines)
+        # 기준 프레임의 중첩 줄을 다른 모델로 읽었으면(「วางซ้อน Lv.2 (thai)」: 이름은 영어, UI 는 태국어) 그 모델로도 읽어 그 값을 쓴다 —
+        # 고른 모델로는 중첩 줄이 거의 안 읽히고 엉뚱한 줄 하나가 「1」로 잡혀 표가 갈렸다(rev_70nkqi 아글라이아 S2 를 uncertain)
+        m_alt = re.search(r'\((\w+)\)\s*$', anchor.get('superimp_line') or '')
+        if m_alt and m_alt.group(1) in MODELS and m_alt.group(1) != model:
+            sp2, line2 = superimp_from(read_lines(panel_crop(image), [m_alt.group(1)])[m_alt.group(1)])
+            if sp2 is not None:
+                superimp, line = sp2, f'{line2} ({m_alt.group(1)})'
         samples.append({'t': t, 'title': title, 'score': score,
                         's': superimp, 's_line': line})
     return samples
@@ -1538,7 +1545,15 @@ def judge(rev, build_indices=None):
         s1 = fr['who'][1][0] if len(fr['who']) > 1 else 0.0
         ls = fr['lc_scores']
         dt = fr.get('details')
-        if s0 >= 0.7 or (s0 >= 0.6 and s0 - s1 >= 0.3):
+        # 이름 앞부분이 같은 두 캐릭터(「Robin」 · 「Robin • Summeretto」)가 팀에 같이 있으면 머리글 뒷부분(태국어 등)을 못 읽었을 때
+        # 짧은 이름에 붙는다 → 광추 제목이 다른 쪽 제출 광추와 또렷이 맞으면 그쪽(rev_70nkqi: 서머레토 화면이 「Robin - a=」로 로빈에 붙음)
+        prefix_twin = [k for k in range(len(chars)) if k != k0 and
+                       (norm(chars[k]['char']).startswith(norm(chars[k0]['char'])) or norm(chars[k0]['char']).startswith(norm(chars[k]['char'])))]
+        if s0 >= 0.7 and prefix_twin and ls and ls[0][1] in prefix_twin and ls[0][0] >= 0.9 \
+                and (len(ls) < 2 or ls[1][0] < ls[0][0] - 0.25):
+            fr['char_k'], fr['how'] = ls[0][1], f"lc title {ls[0][0]:.2f} (header '{fr['header']}' also fits {chars[k0]['char']})"
+            fr['twin_header'] = (norm(fr['header'] or ''), ls[0][1])
+        elif s0 >= 0.7 or (s0 >= 0.6 and s0 - s1 >= 0.3):
             fr['char_k'], fr['how'] = k0, f'name {s0:.2f}' + fr.get('sweep_note', '')
         elif ls and ls[0][0] >= 0.9 and (len(ls) < 2 or ls[1][0] < ls[0][0] - 0.25):
             # 광추 제목이 한 캐릭터의 제출 광추와만 뚜렷이 맞으면 디테일 화면보다 앞선다
@@ -1597,6 +1612,12 @@ def judge(rev, build_indices=None):
             continue
         s0, k0 = fr['who'][0]
         s1 = fr['who'][1][0] if len(fr['who']) > 1 else 0.0
+        # 광추 화면에서 이름 앞부분이 같은 다른 캐릭터로 옮긴 머리글과 같은 글이면 성혼 화면도 그 캐릭터(rev_70nkqi)
+        twin = next((l['twin_header'][1] for l in lcf if l.get('twin_header') and l['vid'] == fr['vid']
+                     and l['twin_header'][0] and l['twin_header'][0] == norm(fr['header'] or '')), None)
+        if twin is not None and s0 >= 0.7:
+            fr['char_k'], fr['how'] = twin, f"same header as LC (name also fits {chars[k0]['char']})"
+            continue
         if s0 >= 0.7 or (s0 >= 0.6 and s0 - s1 >= 0.3):
             fr['char_k'], fr['how'] = k0, f'name {s0:.2f}' + fr.get('sweep_note', '')
             continue
