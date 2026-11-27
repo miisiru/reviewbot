@@ -6,6 +6,7 @@
 OCR 은 프레임 전체가 아니라 위치를 아는 작은 칸만, 읽은 글은 해석하지 않고 후보 이름과 맞춘다.
 python judge.py <rev>   → runs/<rev>/judge.json + 요약 출력"""
 import os, sys, json, re, glob, difflib, unicodedata
+from collections import Counter
 import numpy as np
 import cv2
 
@@ -1043,6 +1044,7 @@ def header_sweep(fr, frames, rev, vids, d, model, chars, team_en):
         fr['header'] = txt
         fr['who'] = [(s, k)] + [(min(z[0], 0.3), z[1]) for z in fr['who'] if z[1] != k]
         fr['sweep_note'] = f' (header sweep {len(hits)}/{len(got)} at {t})'
+        fr['header_from'] = min(z[1] for z in hits)      # 이 캐릭터 머리글이 처음 읽힌 시각(앞 캐릭터 성혼 읽기 창의 끝으로 쓴다)
     elif not mine and foreign >= 2:
         fr['foreign'] = True
         fr['sweep_note'] = f' (header sweep: other character {foreign}/{len(got)})'
@@ -1364,6 +1366,11 @@ def judge(rev, build_indices=None):
         fr['foreign'] = bool(fr['header']) and fr['who'][0][0] < 0.7 and rival_score(fr['header'], team_en) >= 0.9
         if lay and not fr['foreign'] and fr['who'][0][0] < 0.7:
             header_sweep(fr, frames, rev, vids, d, model, chars, team_en)
+    # 머리글(누구 화면인지)을 모든 프레임에서 먼저 정한 뒤 광추 · 성혼을 읽는다 — 성혼 읽기 창의 끝을 뒤 프레임의 머리글 재확인 시각(header_from)으로 자르기 때문
+    for fr in frames:
+        f = cv2.imread(fr['path'])
+        lay = fr['lay']
+        team_en = [c_['char'] for c_ in chars]
         if fr['tab'] == 'LightCone':
             pl = read_lines(panel_crop(f), [model])[model]
             # 일본어 제목 위의 후리가나(「ながよる」 「かがや」 「ほし」)는 줄로 따로 잡혀 제목을 밀어낸다 → 짧은 히라가나만의 줄은 뺀다(rev_13uh4f6)
@@ -1437,6 +1444,12 @@ def judge(rev, build_indices=None):
             ts = sorted(g['t'] for g in frames if g['vid'] == fr['vid'] and g is not fr)
             prv = max((t for t in ts if t < fr['t']), default=None)
             nxt = min((t for t in ts if t > fr['t']), default=None)
+            # 뒤 프레임의 머리글 재확인이 다음 캐릭터 머리글을 더 일찍 봤으면 거기까지만 읽는다. 머리글이 흐려지는 동안은 이름 비교가
+            # 「모름」이라 다음 캐릭터의 노드가 섞인다(rev_785osu: 펄 화면엔 자물쇠가 안 읽히고 408.45초부터의 비영 E1 이 펄로 읽혔다)
+            later = [g.get('header_from') for g in frames if g['vid'] == fr['vid'] and g is not fr and g['t'] > fr['t']
+                     and g.get('header_from') and g['header_from'] > fr['t'] + 0.05]
+            if later:
+                nxt = min([nxt] + later) if nxt is not None else min(later)
             n, mx, nfr = read_eidolon(video, fr['t'], lay, W, H, since=prv, until=nxt, ref_img=f) if lay else (None, None, 0)
             fr['locks'], fr['lock_scores'], fr['lock_frames'] = n, mx, nfr
             fr['activatable'] = red_badge(f, lay) if lay else False
@@ -1771,8 +1784,12 @@ def judge(rev, build_indices=None):
                         r['lc_uncertain'] = True
                 if retry_s:
                     votes = [sample['s'] for sample in samples if sample['s'] is not None]
+                    top, n_top = Counter(votes).most_common(1)[0] if votes else (None, 0)
                     if len(votes) >= 2 and len(set(votes)) == 1:
                         r['s_seen'] = votes[0]
+                    elif n_top >= 3 and n_top >= 0.75 * len(votes):
+                        # 또렷한 읽기 셋 이상이 같고 넷 중 셋 이상이면 그 값(rev_zq6u9b: S5 셋 + 흐린 프레임 S3 하나로 uncertain 이었다)
+                        r['s_seen'] = top
                     else:
                         r['s_uncertain'] = True
 
