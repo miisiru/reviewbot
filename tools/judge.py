@@ -1770,7 +1770,14 @@ def judge(rev, build_indices=None):
             pass
         if lcf:
             # 광추 점수가 같으면 중첩 줄 · 제목이 읽힌 프레임을 고른다(rev_1ggwrd: 첫 장이 넘어가는 중이라 「In-ns」뿐이고 뒤 세 장은 「วางซ้อน Lv.5」)
-            f0 = max(lcf, key=lambda f: (f['lc_scores'][0][0] if f['lc_scores'] else 0, f.get('superimp') is not None,
+            # 중첩 줄에 중첩 낱말(「重畳ランク」 「วางซ้อน」 …)이 실제로 든 프레임을 가장 먼저 — 다른 모델이 엉뚱한 줄(「B2.0R3」)을
+            # 숫자로 잡은 프레임이 골라져 S3 으로 읽혔다(rev_ikc0xl, 나머지 두 장은 「重畳ランク1」)
+            def s_quality(f):
+                if f.get('superimp') is None:
+                    return 0
+                w = norm(re.sub(r'[0-9]', '', re.sub(r'\(\w+\)\s*$', '', f.get('superimp_line') or '')))
+                return 2 if any(k in w or (len(w) >= 3 and w in k) for k in SUPERIMP) else 1
+            f0 = max(lcf, key=lambda f: (f['lc_scores'][0][0] if f['lc_scores'] else 0, s_quality(f),
                                          bool(f.get('title_found', True))))
             lcs_k = dict((kk, s) for s, kk in f0['lc_scores'])
             r['lc_seen'] = f0['panel_title']
